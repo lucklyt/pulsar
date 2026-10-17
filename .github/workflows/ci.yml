@@ -1,0 +1,63 @@
+name: CI & Release Packaging
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-test-package:
+    name: Build, Test & Package (macOS Apple Silicon)
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Show Environment Info
+        run: |
+          xcodebuild -version
+          swift --version
+          uname -a
+
+      - name: Run Unit Tests
+        run: |
+          swift test -v
+
+      - name: Build Native Pulsar.app
+        run: |
+          chmod +x ./scripts/build_app.sh
+          ./scripts/build_app.sh
+
+      - name: Package DMG and ZIP Installers
+        run: |
+          cd build
+          zip -r -y Pulsar-macOS-arm64.zip Pulsar.app
+          hdiutil create -volname "Pulsar" -srcfolder Pulsar.app -ov -format UDZO Pulsar-macOS-arm64.dmg
+          ls -lh
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pulsar-macOS-Artifacts
+          path: |
+            build/Pulsar-macOS-arm64.dmg
+            build/Pulsar-macOS-arm64.zip
+          retention-days: 30
+
+      - name: Create GitHub Release (On Tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/Pulsar-macOS-arm64.dmg
+            build/Pulsar-macOS-arm64.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false
