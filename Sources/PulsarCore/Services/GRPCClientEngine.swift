@@ -197,7 +197,7 @@ public final class GRPCClientEngine {
             initialMetadata: [
                 "content-type": "application/grpc+proto",
                 "grpc-accept-encoding": "identity,deflate,gzip",
-                "server": "wombat-grpc-engine/2.0"
+                "server": "pulsar-grpc-engine/2.0"
             ],
             trailingMetadata: [
                 "grpc-status": "0",

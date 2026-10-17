@@ -13,7 +13,7 @@ public struct NacosInstanceList: Codable {
     public let hosts: [NacosInstance]
 }
 
-/// Nacos 服务发现解析器 (继承并优化 lucklyt/wombat 的 Nacos 扩展能力)
+/// Nacos 服务发现解析器 (原生高性能 Nacos 服务寻址与健康实例解析)
 public final class NacosResolver {
     public static let shared = NacosResolver()
     private let urlSession: URLSession

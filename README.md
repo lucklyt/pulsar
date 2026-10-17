@@ -17,15 +17,15 @@
 
 ## 🌟 为什么做 Pulsar？(Why Pulsar?)
 
-旧时代的 gRPC 测试工具（如基于 Electron 的旧版 Wombat 或 Postman）面临着启动缓慢、动辄占用 500MB+ 内存、多级目录 Proto 引用配置繁琐、界面排版粗糙容易变形等痛点。
+许多传统跨平台 gRPC 测试工具或大型通用 API 客户端往往面临着启动缓慢、动辄占用数百兆内存、多级目录 Proto 引用配置繁琐、界面排版粗糙容易变形等痛点。
 
-**Pulsar** 彻底摒弃了 Webview/Chromium 引擎，完全基于 **Apple 原生技术栈（Swift 6 + SwiftUI + AppKit）** 重新设计与编码。界面交互与体验深度对标 **[usebruno/bruno](https://github.com/usebruno/bruno)** 的设计精髓——**极简卡片、紧凑分栏、折叠清晰、告别冗余空白、离线优先与毫秒级响应**。
+**Pulsar** 专为 macOS 开发者打造，完全基于 **Apple 原生技术栈（Swift 6 + SwiftUI + AppKit）** 进行架构设计与编码。界面交互与设计体验对标 **[usebruno/bruno](https://github.com/usebruno/bruno)** 的精简理念——**极简卡片、紧凑分栏、层级折叠清晰、告别冗余空白、离线优先与毫秒级响应**。
 
 ### 📊 性能与体验对比
 
-| 核心指标 | 旧版 Wombat (Electron) | Postman (gRPC) | **Pulsar (Native macOS)** |
+| 核心指标 | 传统跨平台工具 | 大型通用 API 客户端 | **Pulsar (Native macOS)** |
 | :--- | :--- | :--- | :--- |
-| **运行时架构** | Chromium + Node.js | Chromium + Node.js | **100% Native Swift 6 + AppKit** |
+| **运行时架构** | 网页容器运行时 | 复杂臃肿运行时 | **100% Native Swift 6 + AppKit** |
 | **冷启动速度** | ~3.8 秒 | ~5.2 秒 | **⚡️ < 0.15 秒（闪电冷启）** |
 | **常驻内存占用** | 420 MB - 680 MB | 550 MB - 1.2 GB | **🍃 ~28 MB（极低内存）** |
 | **应用包体积** | ~180 MB | ~240 MB | **📦 4.2 MB（极小体积）** |

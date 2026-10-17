@@ -189,7 +189,7 @@ final class PulsarTests: XCTestCase {
 
     func testMultiLevelImportPathResolution() throws {
         let fileManager = FileManager.default
-        let baseDir = "/tmp/test_wombat_import_\(UUID().uuidString.prefix(8))"
+        let baseDir = "/tmp/test_pulsar_import_\(UUID().uuidString.prefix(8))"
         let protoRootDir = "\(baseDir)/proto"
         let commonDir = "\(protoRootDir)/common/v1"
         let orderDir = "\(protoRootDir)/order/v1"

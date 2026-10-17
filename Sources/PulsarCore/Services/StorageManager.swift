@@ -9,16 +9,8 @@ public final class StorageManager {
 
     public init() {
         let baseDir = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let pulsarDir = baseDir.appendingPathComponent("Pulsar", isDirectory: true)
-        let oldDir = baseDir.appendingPathComponent("WombatNative", isDirectory: true)
-
-        // 如果存在旧版 WombatNative 目录且新目录不存在，则优雅迁移
-        if fileManager.fileExists(atPath: oldDir.path) && !fileManager.fileExists(atPath: pulsarDir.path) {
-            try? fileManager.copyItem(at: oldDir, to: pulsarDir)
-        } else {
-            try? fileManager.createDirectory(at: pulsarDir, withIntermediateDirectories: true)
-        }
-        self.appSupportDir = pulsarDir
+        self.appSupportDir = baseDir.appendingPathComponent("Pulsar", isDirectory: true)
+        try? fileManager.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
     }
 
     private var workspaceFile: URL {
