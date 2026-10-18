@@ -1345,6 +1345,329 @@ final class PulsarTests: XCTestCase {
         XCTAssertTrue(reportMD.contains("载荷 Diff 详情"))
         XCTAssertTrue(reportMD.contains("+"))
     }
+
+    // MARK: - 26. 环境变量循环引用与畸形占位符边界测试 (Edge Cases)
+
+    func testCircularVariableReferenceProtection() {
+        let engine = EnvironmentEngine.shared
+
+        // 1. 相互循环引用 A -> B -> A
+        let envCircular = EnvironmentModel(
+            name: "CircularEnv",
+            variables: [
+                VariableItem(key: "A", value: "{{B}}"),
+                VariableItem(key: "B", value: "{{A}}")
+            ]
+        )
+        // 应该在 maxDepth 处被安全截断，绝不发生死循环或栈溢出
+        let resolvedCircular = engine.resolve(template: "val_{{A}}", environment: envCircular, maxDepth: 5)
+        XCTAssertTrue(resolvedCircular.contains("{{A}}") || resolvedCircular.contains("{{B}}"))
+
+        // 2. 自引用 X -> X
+        let envSelf = EnvironmentModel(
+            name: "SelfEnv",
+            variables: [
+                VariableItem(key: "X", value: "prefix_{{X}}")
+            ]
+        )
+        let resolvedSelf = engine.resolve(template: "{{X}}", environment: envSelf, maxDepth: 3)
+        XCTAssertTrue(resolvedSelf.contains("prefix_"))
+
+        // 3. 4 层深度正常级联解析
+        let envDeep = EnvironmentModel(
+            name: "DeepEnv",
+            variables: [
+                VariableItem(key: "k1", value: "{{k2}}"),
+                VariableItem(key: "k2", value: "{{k3}}"),
+                VariableItem(key: "k3", value: "{{k4}}"),
+                VariableItem(key: "k4", value: "deep_success")
+            ]
+        )
+        let resolvedDeep = engine.resolve(template: "{{k1}}", environment: envDeep, maxDepth: 5)
+        XCTAssertEqual(resolvedDeep, "deep_success")
+
+        // 4. 空占位符与畸形花括号
+        XCTAssertEqual(engine.resolve(template: "{{}}"), "{{}}")
+        XCTAssertEqual(engine.resolve(template: "{{   }}"), "{{   }}")
+        XCTAssertEqual(engine.resolve(template: "hello {{unknown}}"), "hello {{unknown}}")
+        XCTAssertEqual(engine.resolve(template: "plain text without braces"), "plain text without braces")
+        XCTAssertEqual(engine.resolve(template: ""), "")
+    }
+
+    // MARK: - 27. AssertionEngine 复杂多维数组、Null 与非对称断言边界测试 (Edge Cases)
+
+    func testAssertionEngineComplexArrayAndNullPaths() {
+        let engine = AssertionEngine.shared
+
+        let complexJSON = """
+        {
+            "matrix": [
+                [10, 20],
+                [30, 40]
+            ],
+            "users": [
+                {"name": "Alice", "deletedAt": null},
+                {"name": "Bob", "tags": ["admin", "super"]}
+            ],
+            "negative": -42,
+            "floatVal": 3.14159,
+            "emptyStr": "",
+            "emptyArr": []
+        }
+        """
+
+        let response = RPCResponse(
+            requestId: UUID(),
+            statusCode: 0,
+            statusName: "OK",
+            durationMs: 12.3,
+            responsePayload: complexJSON
+        )
+
+        let rules: [AssertionRule] = [
+            // 多维数组索引
+            AssertionRule(expression: "res.body.matrix.1.0", op: .equals, expectedValue: "30"),
+            AssertionRule(expression: "res.body.matrix.1.1", op: .equals, expectedValue: "40"),
+            // 嵌套对象数组
+            AssertionRule(expression: "res.body.users.1.tags.1", op: .equals, expectedValue: "super"),
+            AssertionRule(expression: "res.body.users.1.tags.length", op: .equals, expectedValue: "2"),
+            // null 字段校验
+            AssertionRule(expression: "res.body.users.0.deletedAt", op: .isNullOrEmpty),
+            AssertionRule(expression: "res.body.users.0.deletedAt", op: .notEquals, expectedValue: "valid"),
+            // 越界索引防护
+            AssertionRule(expression: "res.body.matrix.99.0", op: .isNullOrEmpty),
+            AssertionRule(expression: "res.body.users.5.name", op: .isNullOrEmpty),
+            // 负数与浮点数比较
+            AssertionRule(expression: "res.body.negative", op: .lessThan, expectedValue: "0"),
+            AssertionRule(expression: "res.body.negative", op: .greaterThan, expectedValue: "-50"),
+            AssertionRule(expression: "res.body.floatVal", op: .equals, expectedValue: "3.14158"), // 容差范围内
+            // 空字符串与空数组
+            AssertionRule(expression: "res.body.emptyStr", op: .isNullOrEmpty),
+            AssertionRule(expression: "res.body.emptyArr.length", op: .equals, expectedValue: "0")
+        ]
+
+        let results = engine.evaluateAssertions(rules: rules, response: response)
+        for r in results {
+            XCTAssertTrue(r.passed, "断言异常失败: \(r.expression) \(r.op.rawValue) \(r.expectedValue)，实际值: \(r.actualValue)")
+        }
+
+        // 畸形非 JSON 响应体保护
+        let malformedResp = RPCResponse(
+            requestId: UUID(),
+            statusCode: 14,
+            statusName: "UNAVAILABLE",
+            durationMs: 1.0,
+            responsePayload: "Internal Server Error HTML 502"
+        )
+        let malformedResults = engine.evaluateAssertions(
+            rules: [AssertionRule(expression: "res.body.user.name", op: .isNullOrEmpty)],
+            response: malformedResp
+        )
+        XCTAssertTrue(malformedResults.first?.passed ?? false)
+    }
+
+    // MARK: - 28. CollectionRunner 熔断策略与空任务边界测试 (Edge Cases)
+
+    func testCollectionRunnerCancellationAndEdgeCases() async {
+        let runner = CollectionRunnerEngine.shared
+
+        // 1. 空用例列表
+        let emptyConfig = CollectionRunConfig(collectionId: UUID(), collectionName: "EmptySuite")
+        let emptySummary = await runner.run(
+            config: emptyConfig,
+            requests: [],
+            baseEnvironment: nil,
+            globalVariables: [],
+            resolveEffectiveConfig: { req in
+                AppState.EffectiveRequestConfig(
+                    effectiveRequest: req,
+                    effectiveAuth: req.auth,
+                    authSource: "默认",
+                    inheritedMetadata: [],
+                    effectiveSecurity: TLSConfig(mode: .plaintext),
+                    securitySource: "默认",
+                    effectiveTimeout: 10.0
+                )
+            }
+        )
+        XCTAssertEqual(emptySummary.totalRequests, 0)
+        XCTAssertTrue(emptySummary.results.isEmpty)
+
+        // 2. 外部预先取消 (Pre-cancelled)
+        let cancelledSummary = await runner.run(
+            config: emptyConfig,
+            requests: [RequestModel(name: "Req1"), RequestModel(name: "Req2")],
+            baseEnvironment: nil,
+            globalVariables: [],
+            resolveEffectiveConfig: { req in
+                AppState.EffectiveRequestConfig(
+                    effectiveRequest: req,
+                    effectiveAuth: req.auth,
+                    authSource: "默认",
+                    inheritedMetadata: [],
+                    effectiveSecurity: TLSConfig(mode: .plaintext),
+                    securitySource: "默认",
+                    effectiveTimeout: 10.0
+                )
+            },
+            isCancelled: { true }
+        )
+        XCTAssertEqual(cancelledSummary.results.count, 0)
+
+        // 3. 熔断策略 (stopOnFirstFailure): 第一条请求断言失败，后续请求应被立即跳过
+        var failReq = RequestModel(name: "FailReq")
+        failReq.assertions = [
+            AssertionRule(expression: "res.status", op: .equals, expectedValue: "999") // 故意失败
+        ]
+        let passReq1 = RequestModel(name: "PassReq1")
+        let passReq2 = RequestModel(name: "PassReq2")
+
+        let fuseConfig = CollectionRunConfig(
+            collectionId: UUID(),
+            collectionName: "FusingSuite",
+            stopOnFirstFailure: true
+        )
+
+        let fusedSummary = await runner.run(
+            config: fuseConfig,
+            requests: [failReq, passReq1, passReq2],
+            baseEnvironment: nil,
+            globalVariables: [],
+            resolveEffectiveConfig: { req in
+                AppState.EffectiveRequestConfig(
+                    effectiveRequest: req,
+                    effectiveAuth: req.auth,
+                    authSource: "默认",
+                    inheritedMetadata: [],
+                    effectiveSecurity: TLSConfig(mode: .plaintext),
+                    securitySource: "默认",
+                    effectiveTimeout: 10.0
+                )
+            }
+        )
+        // 应该在第 1 条失败后熔断停止，总执行结果数应为 1 而不是 3
+        XCTAssertEqual(fusedSummary.results.count, 1)
+        XCTAssertEqual(fusedSummary.failedRequests, 1)
+        XCTAssertFalse(fusedSummary.results.first?.isSuccess ?? true)
+    }
+
+    // MARK: - 29. ResponseDiff 极端空载荷与完全不相关载荷对比测试 (Edge Cases)
+
+    func testResponseDiffEmptyAndDisjointPayloads() {
+        let diffEngine = ResponseDiffEngine.shared
+
+        // 1. 两端均为空
+        let empty1 = RPCResponse(requestId: UUID(), statusCode: 0, statusName: "OK", durationMs: 10, responsePayload: "")
+        let empty2 = RPCResponse(requestId: UUID(), statusCode: 0, statusName: "OK", durationMs: 10, responsePayload: "")
+        let emptyReport = diffEngine.compare(baseline: empty1, current: empty2)
+        XCTAssertTrue(emptyReport.isIdentical)
+        XCTAssertEqual(emptyReport.addedCount, 0)
+        XCTAssertEqual(emptyReport.removedCount, 0)
+
+        // 2. 两端完全无交集的非 JSON 纯文本
+        let disjoint1 = RPCResponse(requestId: UUID(), statusCode: 0, statusName: "OK", durationMs: 10, responsePayload: "alpha\nbeta\ngamma")
+        let disjoint2 = RPCResponse(requestId: UUID(), statusCode: 0, statusName: "OK", durationMs: 20, responsePayload: "one\ntwo\nthree")
+        let disjointReport = diffEngine.compare(baseline: disjoint1, current: disjoint2)
+        XCTAssertFalse(disjointReport.isIdentical)
+        XCTAssertEqual(disjointReport.removedCount, 3)
+        XCTAssertEqual(disjointReport.addedCount, 3)
+        XCTAssertEqual(disjointReport.latencyDeltaMs, 10.0)
+
+        // 3. 状态码突变 (例如 200 OK -> 503 UNAVAILABLE)
+        let statusErrorResp = RPCResponse(requestId: UUID(), statusCode: 14, statusName: "UNAVAILABLE", durationMs: 50, responsePayload: "")
+        let statusReport = diffEngine.compare(baseline: empty1, current: statusErrorResp)
+        XCTAssertTrue(statusReport.statusCodeChanged)
+    }
+
+    // MARK: - 30. HeaderBulkConverter 边缘格式兼容测试 (Edge Cases)
+
+    func testHeaderBulkConverterEdgeCases() {
+        // 1. 空输入与全换行
+        let emptyHeaders = HeaderBulkConverter.fromBulkText("   \n\n  \t  \n")
+        XCTAssertTrue(emptyHeaders.isEmpty)
+
+        // 2. 缺失冒号的非法行过滤
+        let invalidLinesText = """
+        This is an invalid header line without colon
+        Valid-Header: 123
+        Another broken line
+        """
+        let parsedInvalid = HeaderBulkConverter.fromBulkText(invalidLinesText)
+        XCTAssertEqual(parsedInvalid.count, 1)
+        XCTAssertEqual(parsedInvalid.first?.key, "Valid-Header")
+        XCTAssertEqual(parsedInvalid.first?.value, "123")
+
+        // 3. 多种注释符号 (#, //) 与首尾留白
+        let commentText = """
+          # Commented-Header-1: value1  
+          // Commented-Header-2: value2
+        Normal-Header: normal
+        """
+        let parsedComments = HeaderBulkConverter.fromBulkText(commentText)
+        XCTAssertEqual(parsedComments.count, 3)
+        XCTAssertFalse(parsedComments[0].isEnabled)
+        XCTAssertEqual(parsedComments[0].key, "Commented-Header-1")
+        XCTAssertFalse(parsedComments[1].isEnabled)
+        XCTAssertEqual(parsedComments[1].key, "Commented-Header-2")
+        XCTAssertTrue(parsedComments[2].isEnabled)
+        XCTAssertEqual(parsedComments[2].key, "Normal-Header")
+    }
+
+    // MARK: - 31. AppState 标签页极端切换与搜索过滤边界测试 (UI State Edge Cases)
+
+    @MainActor
+    func testAppStateTabNavigationAndEdgeCases() {
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("tab_test_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let storage = StorageManager(appSupportDir: tempDir)
+        let appState = AppState(storage: storage)
+        appState.openTabIds = []
+        appState.activeTabId = nil
+
+        let col = CollectionModel(name: "UITestCol")
+        let req1 = RequestModel(name: "Req 1", collectionId: col.id)
+        let req2 = RequestModel(name: "Req 2", collectionId: col.id)
+        let req3 = RequestModel(name: "Req 3", collectionId: col.id)
+        var fullCol = col
+        fullCol.requests = [req1, req2, req3]
+        appState.workspace.collections = [fullCol]
+
+        // 1. 打开 3 个 Tab，当前为 req2
+        appState.openTab(for: req1)
+        appState.openTab(for: req2)
+        appState.openTab(for: req3)
+        appState.activeTabId = req2.id
+        XCTAssertEqual(appState.openTabIds.count, 3)
+        XCTAssertEqual(appState.activeTabId, req2.id)
+
+        // 2. 关闭中间激活的 req2 -> activeTab 自动平滑顺延到下一个/邻近 Tab
+        appState.closeTab(id: req2.id)
+        XCTAssertEqual(appState.openTabIds.count, 2)
+        XCTAssertNotNil(appState.activeTabId)
+        XCTAssertNotEqual(appState.activeTabId, req2.id)
+
+        // 3. 关闭不存在的 UUID -> 不崩溃且保持不变
+        let nonExistentId = UUID()
+        appState.closeTab(id: nonExistentId)
+        XCTAssertEqual(appState.openTabIds.count, 2)
+
+        // 4. 全部关闭
+        appState.closeTab(id: req1.id)
+        appState.closeTab(id: req3.id)
+        XCTAssertTrue(appState.openTabIds.isEmpty)
+        XCTAssertNil(appState.activeTabId)
+
+        // 5. 搜索过滤含特殊正则字符 (e.g. `[`, `*`, `(`, `\`) 不引起崩溃
+        appState.searchQuery = "Req [1]*("
+        let safeFiltered = appState.filteredRequests(in: fullCol)
+        XCTAssertTrue(safeFiltered.isEmpty)
+
+        appState.searchQuery = "req"
+        let matched = appState.filteredRequests(in: fullCol)
+        XCTAssertEqual(matched.count, 3)
+    }
 }
 
 // MARK: - Mock URLProtocol for Nacos HTTP 测试

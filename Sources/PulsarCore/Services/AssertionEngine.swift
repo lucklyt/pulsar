@@ -76,11 +76,11 @@ public final class AssertionEngine {
             return (passed, passed ? "\(aNum) < \(eNum) 满足条件" : "实际值 \(aNum) 不小于期望值 \(eNum)")
 
         case .isDefined:
-            let passed = !cleanActual.isEmpty && cleanActual.lowercased() != "null"
+            let passed = !cleanActual.isEmpty && cleanActual.lowercased() != "null" && cleanActual != "<null>"
             return (passed, passed ? "字段已定义且非空" : "字段未定义或为 null/空")
 
         case .isNullOrEmpty:
-            let passed = cleanActual.isEmpty || cleanActual.lowercased() == "null"
+            let passed = cleanActual.isEmpty || cleanActual.lowercased() == "null" || cleanActual == "<null>"
             return (passed, passed ? "字段为空/null" : "字段不为空 (实际为: \(cleanActual))")
         }
     }
@@ -177,7 +177,9 @@ public final class AssertionEngine {
             }
         }
 
-        if let str = current as? String {
+        if current is NSNull {
+            return nil
+        } else if let str = current as? String {
             return str
         } else if let num = current as? NSNumber {
             if CFGetTypeID(num) == CFBooleanGetTypeID() {

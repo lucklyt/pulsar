@@ -196,7 +196,7 @@ public struct HeaderBulkConverter {
                 cleanLine = trimmed
             }
 
-            guard !cleanLine.isEmpty else { continue }
+            guard !cleanLine.isEmpty, cleanLine.contains(":") else { continue }
 
             // 以第一个冒号切割键值
             let parts = cleanLine.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
