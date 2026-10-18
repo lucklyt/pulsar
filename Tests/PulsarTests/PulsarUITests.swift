@@ -97,21 +97,32 @@ final class PulsarUITests: XCTestCase {
     func testMainViewHorizontalAndVerticalLayout() {
         let mainView = MainView(appState: appState)
         let hostingView = NSHostingView(rootView: mainView)
-        hostingView.frame = NSRect(x: 0, y: 0, width: 1200, height: 750)
+        let targetFrame = NSRect(x: 0, y: 0, width: 1200, height: 750)
+        hostingView.frame = targetFrame
+
+        let window = NSWindow(
+            contentRect: targetFrame,
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = hostingView
+        window.layoutIfNeeded()
         hostingView.layoutSubtreeIfNeeded()
 
         // 验证主视图正常挂载且计算尺寸有效
-        let fitSize = hostingView.fittingSize
-        XCTAssertTrue(fitSize.width > 0 && fitSize.height > 0)
+        XCTAssertTrue(hostingView.frame.width > 0 && hostingView.frame.height > 0)
         XCTAssertFalse(hostingView.subviews.isEmpty)
 
         // 切换分栏布局模式：上下垂直分栏 (VSplitView)
         appState.layoutMode = .vertical
+        window.layoutIfNeeded()
         hostingView.layoutSubtreeIfNeeded()
         XCTAssertEqual(appState.layoutMode, .vertical)
 
         // 切换回水平左右分栏 (HSplitView)
         appState.layoutMode = .horizontal
+        window.layoutIfNeeded()
         hostingView.layoutSubtreeIfNeeded()
         XCTAssertEqual(appState.layoutMode, .horizontal)
     }

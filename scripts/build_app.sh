@@ -4,8 +4,15 @@ set -e
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_DIR"
 
-echo "==> Building Pulsar in release mode..."
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build -c release
+if [ -z "$DEVELOPER_DIR" ] && [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
+    export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+fi
+
+VERSION="${VERSION:-2.0.0}"
+BUILD_NUMBER="${BUILD_NUMBER:-1}"
+
+echo "==> Building Pulsar v${VERSION} in release mode..."
+swift build -c release
 
 APP_NAME="Pulsar"
 APP_BUNDLE="$PROJECT_DIR/build/${APP_NAME}.app"
@@ -52,9 +59,9 @@ cat <<EOF > "$CONTENTS_DIR/Info.plist"
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>2.0.0</string>
+    <string>${VERSION}</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>${BUILD_NUMBER}</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
@@ -66,4 +73,15 @@ cat <<EOF > "$CONTENTS_DIR/Info.plist"
 EOF
 
 echo "==> Successfully packaged ${APP_NAME}.app at: $APP_BUNDLE"
+
+if [ "$1" = "--dmg" ] || [ "$1" = "--package" ] || [ -n "$PACKAGE" ]; then
+    echo "==> Packaging DMG and ZIP installers..."
+    cd "$PROJECT_DIR/build"
+    rm -f "${APP_NAME}-macOS-arm64.zip" "${APP_NAME}-macOS-arm64.dmg"
+    zip -r -y "${APP_NAME}-macOS-arm64.zip" "${APP_NAME}.app"
+    hdiutil create -volname "${APP_NAME}" -srcfolder "${APP_NAME}.app" -ov -format UDZO "${APP_NAME}-macOS-arm64.dmg"
+    echo "==> Package installers created in $PROJECT_DIR/build:"
+    ls -lh "${APP_NAME}-macOS-arm64".*
+fi
+
 echo "You can open it now by running: open $APP_BUNDLE"
