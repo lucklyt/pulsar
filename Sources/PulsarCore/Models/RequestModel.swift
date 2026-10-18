@@ -46,7 +46,8 @@ public struct MetadataHeader: Identifiable, Codable, Equatable, Hashable {
 /// 身份验证配置
 public struct AuthConfig: Codable, Equatable, Hashable {
     public enum AuthType: String, Codable, CaseIterable {
-        case none = "None"
+        case inherit = "继承上级 (Inherit)"
+        case none = "无认证 (None)"
         case bearer = "Bearer Token"
         case apiKey = "API Key (Metadata)"
         case basic = "Basic Auth"
@@ -60,7 +61,7 @@ public struct AuthConfig: Codable, Equatable, Hashable {
     public var password: String
 
     public init(
-        type: AuthType = .none,
+        type: AuthType = .inherit,
         bearerToken: String = "",
         apiKeyName: String = "x-api-key",
         apiKeyValue: String = "",
@@ -74,15 +75,30 @@ public struct AuthConfig: Codable, Equatable, Hashable {
         self.username = username
         self.password = password
     }
+
+    enum CodingKeys: String, CodingKey {
+        case type, bearerToken, apiKeyName, apiKeyValue, username, password
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.type = try container.decodeIfPresent(AuthType.self, forKey: .type) ?? .inherit
+        self.bearerToken = try container.decodeIfPresent(String.self, forKey: .bearerToken) ?? ""
+        self.apiKeyName = try container.decodeIfPresent(String.self, forKey: .apiKeyName) ?? "x-api-key"
+        self.apiKeyValue = try container.decodeIfPresent(String.self, forKey: .apiKeyValue) ?? ""
+        self.username = try container.decodeIfPresent(String.self, forKey: .username) ?? ""
+        self.password = try container.decodeIfPresent(String.self, forKey: .password) ?? ""
+    }
 }
 
 /// TLS / mTLS 安全配置
 public struct TLSConfig: Codable, Equatable, Hashable {
     public enum Mode: String, Codable, CaseIterable {
-        case plaintext = "Plaintext (Insecure)"
-        case tlsSystem = "TLS (System CA)"
-        case tlsCustomCA = "TLS (Custom Root CA)"
-        case mtls = "mTLS (Client Certificate)"
+        case inherit = "继承集合默认 (Inherit)"
+        case plaintext = "明文传输 (Plaintext)"
+        case tlsSystem = "标准 TLS (System CA)"
+        case tlsCustomCA = "自定义根证书 (Custom CA)"
+        case mtls = "双向认证 (mTLS)"
     }
 
     public var mode: Mode
@@ -93,7 +109,7 @@ public struct TLSConfig: Codable, Equatable, Hashable {
     public var insecureSkipVerify: Bool
 
     public init(
-        mode: Mode = .plaintext,
+        mode: Mode = .inherit,
         rootCAPath: String = "",
         clientCertPath: String = "",
         clientKeyPath: String = "",
@@ -106,6 +122,20 @@ public struct TLSConfig: Codable, Equatable, Hashable {
         self.clientKeyPath = clientKeyPath
         self.serverNameOverride = serverNameOverride
         self.insecureSkipVerify = insecureSkipVerify
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case mode, rootCAPath, clientCertPath, clientKeyPath, serverNameOverride, insecureSkipVerify
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.mode = try container.decodeIfPresent(Mode.self, forKey: .mode) ?? .inherit
+        self.rootCAPath = try container.decodeIfPresent(String.self, forKey: .rootCAPath) ?? ""
+        self.clientCertPath = try container.decodeIfPresent(String.self, forKey: .clientCertPath) ?? ""
+        self.clientKeyPath = try container.decodeIfPresent(String.self, forKey: .clientKeyPath) ?? ""
+        self.serverNameOverride = try container.decodeIfPresent(String.self, forKey: .serverNameOverride) ?? ""
+        self.insecureSkipVerify = try container.decodeIfPresent(Bool.self, forKey: .insecureSkipVerify) ?? false
     }
 }
 

@@ -104,13 +104,39 @@ public struct RequestHeaderView: View {
                         .textFieldStyle(.plain)
 
                         if request.address.contains("{{") {
-                            Text("VAR")
-                                .font(.system(size: 8, weight: .heavy))
+                            let unresolved = EnvironmentEngine.shared.findUnresolvedVariables(
+                                in: request.address,
+                                environment: appState.activeEnvironment,
+                                globalVariables: appState.workspace.globalVariables
+                            )
+                            if !unresolved.isEmpty {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .font(.system(size: 8))
+                                    Text(unresolved.joined(separator: ", "))
+                                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                }
                                 .foregroundColor(.orange)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
                                 .background(Color.orange.opacity(0.15))
                                 .cornerRadius(3)
+                                .help("存在未定义变量: \(unresolved.joined(separator: ", "))")
+                            } else {
+                                let resolved = EnvironmentEngine.shared.resolve(
+                                    template: request.address,
+                                    environment: appState.activeEnvironment,
+                                    globalVariables: appState.workspace.globalVariables
+                                )
+                                Text("VAR")
+                                    .font(.system(size: 8, weight: .heavy))
+                                    .foregroundColor(.blue)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(Color.blue.opacity(0.12))
+                                    .cornerRadius(3)
+                                    .help("解析结果: \(resolved)")
+                            }
                         }
                     }
                     .padding(.horizontal, 8)

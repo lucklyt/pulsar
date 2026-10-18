@@ -105,6 +105,9 @@ public struct SidebarView: View {
                                             renameFolderName = folder.name
                                             isRenamingFolder = true
                                         },
+                                        onOpenSettings: {
+                                            appState.editingFolderTarget = FolderSettingsTarget(collectionId: collection.id, folderId: folder.id)
+                                        },
                                         onDelete: {
                                             appState.deleteFolder(id: folder.id)
                                         }
@@ -146,6 +149,20 @@ public struct SidebarView: View {
                                     targetCollectionId = collection.id
                                     renameCollectionName = collection.name
                                     isRenamingCollection = true
+                                },
+                                onOpenSettings: {
+                                    appState.editingCollectionTarget = CollectionSettingsTarget(collectionId: collection.id)
+                                },
+                                onExportToDirectory: {
+                                    let panel = NSOpenPanel()
+                                    panel.canChooseFiles = false
+                                    panel.canChooseDirectories = true
+                                    panel.canCreateDirectories = true
+                                    panel.prompt = "导出到此目录"
+                                    panel.message = "选择用于保存集合 Git 目录结构的父目录"
+                                    if panel.runModal() == .OK, let url = panel.url {
+                                        appState.exportCollectionToDirectory(collectionId: collection.id, targetDir: url)
+                                    }
                                 },
                                 onDelete: {
                                     appState.deleteCollection(id: collection.id)
@@ -249,6 +266,14 @@ public struct SidebarView: View {
             }
             Button("取消", role: .cancel) {}
         }
+        .sheet(item: $appState.editingCollectionTarget) { target in
+            CollectionSettingsView(appState: appState, collectionId: target.collectionId)
+                .frame(minWidth: 700, minHeight: 480)
+        }
+        .sheet(item: $appState.editingFolderTarget) { target in
+            FolderSettingsView(appState: appState, collectionId: target.collectionId, folderId: target.folderId)
+                .frame(minWidth: 620, minHeight: 420)
+        }
     }
 
     private var collectionsHeader: some View {
@@ -269,6 +294,20 @@ public struct SidebarView: View {
                     appState.createNewRequest()
                 }) {
                     Label("新建请求", systemImage: "doc.badge.plus")
+                }
+                Divider()
+                Button(action: {
+                    let panel = NSOpenPanel()
+                    panel.canChooseFiles = false
+                    panel.canChooseDirectories = true
+                    panel.allowsMultipleSelection = false
+                    panel.prompt = "导入"
+                    panel.message = "选择包含 collection.json 的 Git 集合目录"
+                    if panel.runModal() == .OK, let url = panel.url {
+                        appState.importCollectionFromDirectory(from: url)
+                    }
+                }) {
+                    Label("从 Git 目录导入集合...", systemImage: "folder.badge.gearshape")
                 }
             } label: {
                 Image(systemName: "plus")
@@ -308,6 +347,8 @@ struct CollectionRowHeaderView: View {
     let onNewRequest: () -> Void
     let onNewFolder: () -> Void
     let onRename: () -> Void
+    let onOpenSettings: () -> Void
+    let onExportToDirectory: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -331,6 +372,12 @@ struct CollectionRowHeaderView: View {
                     Label("新建文件夹", systemImage: "folder.badge.plus")
                 }
                 Divider()
+                Button(action: onOpenSettings) {
+                    Label("集合设置 (Settings)", systemImage: "gearshape")
+                }
+                Button(action: onExportToDirectory) {
+                    Label("导出为 Git 目录...", systemImage: "arrow.up.bin")
+                }
                 Button(action: onRename) {
                     Label("重命名集合", systemImage: "pencil")
                 }
@@ -360,6 +407,12 @@ struct CollectionRowHeaderView: View {
                 Label("新建文件夹", systemImage: "folder.badge.plus")
             }
             Divider()
+            Button(action: onOpenSettings) {
+                Label("集合设置 (Settings)", systemImage: "gearshape")
+            }
+            Button(action: onExportToDirectory) {
+                Label("导出为 Git 目录...", systemImage: "arrow.up.bin")
+            }
             Button(action: onRename) {
                 Label("重命名集合", systemImage: "pencil")
             }
@@ -376,6 +429,7 @@ struct FolderRowHeaderView: View {
     let requestCount: Int
     let onNewRequest: () -> Void
     let onRename: () -> Void
+    let onOpenSettings: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -410,6 +464,9 @@ struct FolderRowHeaderView: View {
                 Label("在此文件夹下新建请求", systemImage: "doc.badge.plus")
             }
             Divider()
+            Button(action: onOpenSettings) {
+                Label("文件夹设置 (Settings)", systemImage: "gearshape")
+            }
             Button(action: onRename) {
                 Label("重命名文件夹", systemImage: "pencil")
             }

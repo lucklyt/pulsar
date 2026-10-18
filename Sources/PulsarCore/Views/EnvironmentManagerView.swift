@@ -47,12 +47,26 @@ public struct EnvironmentManagerView: View {
 
                     List(selection: $selectedEnvId) {
                         ForEach(appState.workspace.environments) { env in
-                            HStack {
-                                Image(systemName: "globe")
-                                    .foregroundColor(.accentColor)
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(Color(hex: env.colorHex))
+                                    .frame(width: 8, height: 8)
+
                                 Text(env.name)
                                     .font(.system(size: 12))
+
+                                if env.isProduction {
+                                    Text("PROD")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundColor(.red)
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 1)
+                                        .background(Color.red.opacity(0.12))
+                                        .cornerRadius(3)
+                                }
+
                                 Spacer()
+
                                 if appState.workspace.activeEnvironmentId == env.id {
                                     Text("已激活")
                                         .font(.system(size: 9, weight: .bold))
@@ -71,32 +85,66 @@ public struct EnvironmentManagerView: View {
                 .frame(minWidth: 180, maxWidth: 220)
 
                 // 右侧变量编辑区
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 12) {
                     if let selectedId = selectedEnvId,
                        let envIndex = appState.workspace.environments.firstIndex(where: { $0.id == selectedId }) {
                         let envBinding = $appState.workspace.environments[envIndex]
 
-                        HStack {
-                            TextField("环境名称", text: envBinding.name)
-                                .font(.system(size: 14, weight: .semibold))
-                                .textFieldStyle(.roundedBorder)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                TextField("环境名称", text: envBinding.name)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(maxWidth: 220)
 
-                            Spacer()
+                                // 颜色预设圆点选择
+                                HStack(spacing: 5) {
+                                    ForEach(["#10B981", "#3B82F6", "#8B5CF6", "#F59E0B", "#EF4444", "#6B7280"], id: \.self) { hex in
+                                        Circle()
+                                            .fill(Color(hex: hex))
+                                            .frame(width: 14, height: 14)
+                                            .overlay(
+                                                Circle()
+                                                    .stroke(Color.primary.opacity(envBinding.colorHex.wrappedValue == hex ? 0.8 : 0.0), lineWidth: 2)
+                                            )
+                                            .onTapGesture {
+                                                envBinding.colorHex.wrappedValue = hex
+                                            }
+                                    }
+                                }
+                                .padding(.leading, 6)
 
-                            Button(action: {
-                                appState.switchEnvironment(id: selectedId)
-                            }) {
-                                Text(appState.workspace.activeEnvironmentId == selectedId ? "已激活" : "设为当前环境")
+                                Spacer()
+
+                                Button(action: {
+                                    appState.switchEnvironment(id: selectedId)
+                                }) {
+                                    Text(appState.workspace.activeEnvironmentId == selectedId ? "已激活" : "设为当前环境")
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(appState.workspace.activeEnvironmentId == selectedId)
+
+                                Button(action: {
+                                    envBinding.variables.wrappedValue.append(VariableItem(key: "", value: ""))
+                                }) {
+                                    Label("添加变量", systemImage: "plus")
+                                }
+                                .buttonStyle(.bordered)
                             }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(appState.workspace.activeEnvironmentId == selectedId)
 
-                            Button(action: {
-                                envBinding.variables.wrappedValue.append(VariableItem(key: "", value: ""))
-                            }) {
-                                Label("添加变量", systemImage: "plus")
+                            // 生产环境安全控制开关
+                            HStack(spacing: 8) {
+                                Toggle("标记为高危生产环境 (Production Alert)", isOn: envBinding.isProduction)
+                                    .font(.system(size: 11))
+                                    .toggleStyle(.checkbox)
+
+                                if envBinding.isProduction.wrappedValue {
+                                    Text("⚠️ 工具栏将高亮警示 [PROD]，防止对真实业务系统误操作")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.red)
+                                }
                             }
-                            .buttonStyle(.bordered)
+                            .padding(.top, 2)
                         }
 
                         // 变量列表

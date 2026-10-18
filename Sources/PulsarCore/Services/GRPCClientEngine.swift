@@ -79,7 +79,7 @@ public final class GRPCClientEngine {
                 let b64 = Data("\(u):\(p)".utf8).base64EncodedString()
                 outboundHeaders["authorization"] = "Basic \(b64)"
             }
-        case .none:
+        case .none, .inherit:
             break
         }
 

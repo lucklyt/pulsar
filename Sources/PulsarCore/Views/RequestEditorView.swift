@@ -3,9 +3,12 @@ import SwiftUI
 /// Bruno 风格请求配置卡片：带徽标计数的选项卡、Bruno 式 Key-Value 表格、JSON 载荷编辑器与协议文档
 public struct RequestEditorView: View {
     @Binding var request: RequestModel
+    @ObservedObject var appState: AppState
+
     @State private var selectedTab: EditorTab = .body
     @State private var isBulkHeaderEdit: Bool = false
     @State private var bulkHeaderText: String = ""
+    @State private var isInheritedHeadersExpanded: Bool = true
 
     enum EditorTab: String, CaseIterable, Identifiable {
         case body = "请求体"
@@ -26,7 +29,17 @@ public struct RequestEditorView: View {
                 let headerCount = request.metadata.filter { $0.isEnabled && !$0.key.isEmpty }.count
                 tabButton(.headers, badge: headerCount > 0 ? "\(headerCount)" : nil)
 
-                tabButton(.auth, badge: request.auth.type == .none ? nil : request.auth.type.rawValue)
+                let authBadge: String? = {
+                    if request.auth.type == .inherit {
+                        let eff = appState.resolveEffectiveConfig(for: request)
+                        return eff.effectiveAuth.type == .none ? "继承:无" : "继承"
+                    } else if request.auth.type == .none {
+                        return nil
+                    } else {
+                        return request.auth.type.rawValue
+                    }
+                }()
+                tabButton(.auth, badge: authBadge)
                 tabButton(.settings, badge: nil)
                 tabButton(.schema, badge: request.serviceName.isEmpty ? nil : "Proto")
 
@@ -105,6 +118,46 @@ public struct RequestEditorView: View {
 
                 Spacer()
 
+                // Bruno 风格快捷变量插入器
+                Menu {
+                    if let env = appState.activeEnvironment, !env.variables.isEmpty {
+                        Section("当前环境变量 (\(env.name))") {
+                            ForEach(env.variables.filter { $0.isEnabled }) { v in
+                                Button("{{\(v.key)}} (\(v.isSecret ? "******" : v.value))") {
+                                    insertVariable("{{\(v.key)}}")
+                                }
+                            }
+                        }
+                    }
+                    if !appState.workspace.globalVariables.isEmpty {
+                        Section("全局变量") {
+                            ForEach(appState.workspace.globalVariables.filter { $0.isEnabled }) { v in
+                                Button("{{\(v.key)}} (\(v.isSecret ? "******" : v.value))") {
+                                    insertVariable("{{\(v.key)}}")
+                                }
+                            }
+                        }
+                    }
+                    Section("动态内置变量") {
+                        ForEach(EnvironmentEngine.shared.availableBuiltins, id: \.key) { b in
+                            Button("{{\(b.key)}} - \(b.desc)") {
+                                insertVariable("{{\(b.key)}}")
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "curlybraces")
+                        Text("插入变量")
+                    }
+                    .font(.system(size: 11))
+                }
+                .menuStyle(.borderlessButton)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.accentColor.opacity(0.12))
+                .cornerRadius(4)
+
                 Button("格式化 (Prettify)") {
                     prettifyJSON()
                 }
@@ -134,6 +187,34 @@ public struct RequestEditorView: View {
                         .stroke(Color.gray.opacity(0.2), lineWidth: 1)
                 )
 
+            // 变量解析诊断提示 (若存在未解析的引用变量)
+            let unresolvedVars = EnvironmentEngine.shared.findUnresolvedVariables(
+                in: request.payload,
+                environment: appState.activeEnvironment,
+                globalVariables: appState.workspace.globalVariables
+            )
+
+            if !unresolvedVars.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                        .font(.system(size: 11))
+                    Text("未定义的环境变量: " + unresolvedVars.map { "{{\($0)}}" }.joined(separator: ", "))
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                    Spacer()
+                    Button("配置环境变量") {
+                        appState.isEnvironmentModalPresented = true
+                    }
+                    .font(.system(size: 10))
+                    .buttonStyle(.bordered)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.orange.opacity(0.12))
+                .cornerRadius(6)
+            }
+
             HStack {
                 Text("\(request.payload.components(separatedBy: .newlines).count) 行")
                 Text("•")
@@ -144,6 +225,10 @@ public struct RequestEditorView: View {
             .font(.system(size: 10))
             .foregroundColor(.secondary)
         }
+    }
+
+    private func insertVariable(_ snippet: String) {
+        request.payload += snippet
     }
 
     private func prettifyJSON() {
@@ -180,7 +265,9 @@ public struct RequestEditorView: View {
     // MARK: - 2. Headers (Metadata) 编辑区
 
     private var headersEditorView: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let effective = appState.resolveEffectiveConfig(for: request)
+
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Metadata 请求头 (gRPC Metadata)")
                     .font(.system(size: 11, weight: .semibold))
@@ -196,16 +283,123 @@ public struct RequestEditorView: View {
                 .buttonStyle(.borderedProminent)
             }
 
+            // 1. 继承自上级的共享请求头 (Bruno 风格继承层级展示)
+            if !effective.inheritedMetadata.isEmpty {
+                DisclosureGroup(
+                    isExpanded: $isInheritedHeadersExpanded,
+                    content: {
+                        VStack(spacing: 4) {
+                            ForEach(effective.inheritedMetadata, id: \.header.id) { inherited in
+                                let isOverridden = request.metadata.contains {
+                                    $0.key.trimmingCharacters(in: .whitespaces).lowercased() == inherited.header.key.trimmingCharacters(in: .whitespaces).lowercased()
+                                }
+
+                                HStack(spacing: 8) {
+                                    Image(systemName: "arrow.turn.down.right")
+                                        .foregroundColor(.secondary)
+                                        .font(.system(size: 10))
+                                        .frame(width: 18)
+
+                                    Text(inherited.header.key)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .strikethrough(isOverridden)
+                                        .foregroundColor(isOverridden ? .secondary : .primary)
+                                        .frame(width: 170, alignment: .leading)
+
+                                    Text(inherited.header.value)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .strikethrough(isOverridden)
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+
+                                    Spacer()
+
+                                    Text(inherited.source)
+                                        .font(.system(size: 9, weight: .medium))
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 2)
+                                        .background(Color.blue.opacity(0.12))
+                                        .foregroundColor(.blue)
+                                        .cornerRadius(4)
+
+                                    if isOverridden {
+                                        Text("被当前请求覆盖")
+                                            .font(.system(size: 9))
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 2)
+                                            .background(Color.orange.opacity(0.15))
+                                            .foregroundColor(.orange)
+                                            .cornerRadius(4)
+                                    }
+                                }
+                                .padding(.vertical, 3)
+                                .padding(.horizontal, 6)
+                            }
+                        }
+                        .padding(.vertical, 6)
+                        .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+                        .cornerRadius(6)
+                    },
+                    label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "square.stack.3d.down.right.fill")
+                                .foregroundColor(.accentColor)
+                                .font(.system(size: 10))
+                            Text("继承自上级的共享请求头 (\(effective.inheritedMetadata.count) 个)")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                )
+            }
+
+            // 检查请求头中是否存在未解析的环境变量
+            let unresolvedHeaderVars: [String] = {
+                var list: [String] = []
+                for h in request.metadata where h.isEnabled && !h.value.isEmpty {
+                    let missing = EnvironmentEngine.shared.findUnresolvedVariables(
+                        in: h.value,
+                        environment: appState.activeEnvironment,
+                        globalVariables: appState.workspace.globalVariables
+                    )
+                    for m in missing where !list.contains(m) {
+                        list.append(m)
+                    }
+                }
+                return list
+            }()
+
+            if !unresolvedHeaderVars.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                        .font(.system(size: 11))
+                    Text("请求头包含未定义变量: " + unresolvedHeaderVars.map { "{{\($0)}}" }.joined(separator: ", "))
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                    Spacer()
+                    Button("配置环境变量") {
+                        appState.isEnvironmentModalPresented = true
+                    }
+                    .font(.system(size: 10))
+                    .buttonStyle(.bordered)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.orange.opacity(0.12))
+                .cornerRadius(6)
+            }
+
             if request.metadata.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
                     Image(systemName: "list.bullet.rectangle")
                         .font(.system(size: 28))
                         .foregroundColor(.secondary)
-                    Text("暂未配置任何请求头 (Metadata)")
+                    Text("当前请求未附加专属请求头")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
-                    Button("添加第一条请求头") {
+                    Button("添加专属请求头") {
                         request.metadata.append(MetadataHeader(key: "x-client-version", value: "2.0.0"))
                     }
                     .font(.system(size: 11))
@@ -288,6 +482,75 @@ public struct RequestEditorView: View {
             Divider()
 
             switch request.auth.type {
+            case .inherit:
+                let effective = appState.resolveEffectiveConfig(for: request)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 10) {
+                        Image(systemName: effective.effectiveAuth.type == .none ? "info.circle" : "checkmark.shield.fill")
+                            .foregroundColor(effective.effectiveAuth.type == .none ? .secondary : .green)
+                            .font(.system(size: 18))
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("当前生效鉴权: \(effective.effectiveAuth.type.rawValue)")
+                                .font(.system(size: 13, weight: .semibold))
+                            Text("来源: \(effective.authSource)")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(effective.effectiveAuth.type == .none ? Color.gray.opacity(0.08) : Color.green.opacity(0.08))
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(effective.effectiveAuth.type == .none ? Color.gray.opacity(0.2) : Color.green.opacity(0.25), lineWidth: 1)
+                    )
+
+                    if effective.effectiveAuth.type == .bearer {
+                        HStack {
+                            Text("继承的 Bearer Token:")
+                                .font(.system(size: 11, weight: .medium))
+                            Text(effective.effectiveAuth.bearerToken.isEmpty ? "(未填写)" : effective.effectiveAuth.bearerToken)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                    } else if effective.effectiveAuth.type == .apiKey {
+                        HStack {
+                            Text("继承的 API Key:")
+                                .font(.system(size: 11, weight: .medium))
+                            Text("\(effective.effectiveAuth.apiKeyName) = \(effective.effectiveAuth.apiKeyValue)")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
+                    } else if effective.effectiveAuth.type == .basic {
+                        HStack {
+                            Text("继承的 Basic 账户:")
+                                .font(.system(size: 11, weight: .medium))
+                            Text(effective.effectiveAuth.username)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    Divider()
+
+                    Button(action: {
+                        let targetType = (effective.effectiveAuth.type == .inherit || effective.effectiveAuth.type == .none) ? .bearer : effective.effectiveAuth.type
+                        request.auth.type = targetType
+                        request.auth.bearerToken = effective.effectiveAuth.bearerToken
+                        request.auth.apiKeyName = effective.effectiveAuth.apiKeyName
+                        request.auth.apiKeyValue = effective.effectiveAuth.apiKeyValue
+                        request.auth.username = effective.effectiveAuth.username
+                        request.auth.password = effective.effectiveAuth.password
+                    }) {
+                        Label("为此请求配置独立鉴权 (覆盖继承)", systemImage: "pencil.line")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.bordered)
+                }
+
             case .none:
                 VStack(alignment: .leading, spacing: 4) {
                     Text("当前无需附加认证令牌。")
@@ -336,8 +599,6 @@ public struct RequestEditorView: View {
         }
     }
 
-    // MARK: - 4. Settings 编辑区
-
     // MARK: - 4. Settings 编辑区 (Bruno 风格卡片布局，杜绝 Form 错乱)
 
     private var settingsEditorView: some View {
@@ -359,7 +620,28 @@ public struct RequestEditorView: View {
                                     Text(mode.rawValue).tag(mode)
                                 }
                             }
-                            .pickerStyle(.segmented)
+                            .pickerStyle(.menu)
+                            .frame(width: 240)
+                        }
+
+                        if request.tls.mode == .inherit {
+                            let effective = appState.resolveEffectiveConfig(for: request)
+                            HStack(spacing: 8) {
+                                Image(systemName: "checkmark.shield.fill")
+                                    .foregroundColor(.blue)
+                                    .font(.system(size: 13))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("当前生效 TLS: \(effective.effectiveRequest.tls.mode.rawValue)")
+                                        .font(.system(size: 11, weight: .semibold))
+                                    Text("来源: \(effective.securitySource)")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.blue.opacity(0.08))
+                            .cornerRadius(6)
                         }
 
                         if request.tls.mode != .plaintext {

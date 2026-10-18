@@ -55,17 +55,27 @@
 - **紧凑无冗余菜单栏**：左侧紧凑选项卡自适应内容宽度，零多余空白；右侧一体化集成 gRPC 状态码徽章、毫秒级时延与传输尺寸。
 - **动态分栏切换**：支持左右并排（HSplitView）与上下并排（VSplitView）一键切换。
 
-### 4. 强大的变量插值与多环境管理
-- **动态内置变量**：支持 `{{$uuid}}`、`{{$timestamp}}`、`{{$randomInt(min, max)}}`。
-- **环境级联解析**：支持 `{{grpc_host}}`、`{{grpc_port}}`、`{{jwt_token}}` 等跨环境无缝插值。
-- **敏感变量保护**：支持将凭证标记为 `Secret`，输入时自动掩蔽，避免录屏或分享泄露。
-- **Quick Eye 悬浮速览**：无需切出当前请求，即可快速浮窗查看当前活跃环境变量。
+### 4. Bruno 风格层级配置与继承体系 (Hierarchical Inheritance)
+- **集合/文件夹级共享请求头**：可在集合或文件夹设置中配置全局共享 Metadata（如 `x-tenant-id`、`x-client-version`），子请求自动合并并支持同名 Key 独立覆盖。
+- **默认身份认证继承 (Auth Inheritance)**：请求默认采用 `继承上级 (Inherit)`，逐级回溯（`Request -> Folder -> Collection -> None`），无需为每个用例重复输入 Token；亦可一键转为独立覆盖。
+- **默认 TLS 与超时继承**：集合统一配置 TLS 模式与超时时限，用例默认遵循集合设定。
 
-### 5. 连接安全与微服务发现
+### 5. 强大的变量插值、诊断与多环境管理
+- **动态内置变量**：支持 `{{$uuid}}`、`{{$timestamp}}`、`{{$isoTimestamp}}`、`{{$randomInt(min, max)}}`、`{{$randomAlpha}}`。
+- **环境级联解析**：支持 `{{grpc_host}}`、`{{grpc_port}}`、`{{jwt_token}}` 等跨环境无缝插值。
+- **生产环境高危警示 (Production Protection)**：支持将生产环境标记为 `PROD`，激活时工具栏显示显眼红色安全警示徽章，防止误操作线上服务。
+- **Quick Eye 环境变量多作用域速览**：分类呈现当前环境、全局变量与内置变量，支持实时过滤与一键复制 `{{var}}` 插值语法。
+- **变量实时诊断与快捷插入**：地址栏与请求体实时检测未定义的环境变量并给予醒目提示，支持在编辑器中一键弹出变量选择菜单快捷插入。
+
+### 6. Git 友好型多文件目录同步 (Git-Friendly Multi-File Directory Sync)
+- **告别合并冲突**：彻底摆脱单文件巨大 JSON 带来的 Git 协同困境。
+- **目录结构无损导出/导入**：将集合结构解构为 `collection.json`、`folder.json`、`<name>.grpc.json` 及 `environments/*.json`，可直接与微服务源码一同纳入 Git 版本控制。
+
+### 7. 连接安全与微服务发现
 - **全方位 TLS 矩阵**：明文直连 (Plaintext)、标准服务端 TLS、自定义根 CA 证书、双向认证 (mTLS)，搭配原生 `NSOpenPanel` 证书文件选择器。
 - **Nacos 服务发现**：支持 `nacos://127.0.0.1:8848/public/service-name?groupName=DEFAULT_GROUP`，自动解析微服务集群实例并负载均衡调用。
 
-### 6. 一键导出 grpcurl 命令行
+### 8. 一键导出 grpcurl 命令行
 - 支持将当前请求的所有配置（Address、Metadata Headers、TLS 证书参数、JSON Payload）一键生成为等价的 `grpcurl` 终端命令，方便 CI/CD 复制复现。
 
 ---

@@ -176,7 +176,7 @@ final class PulsarTests: XCTestCase {
         )
 
         var req = RequestModel(name: "Test Secure")
-        XCTAssertEqual(req.auth.type, .none)
+        XCTAssertEqual(req.auth.type, .inherit)
 
         ProtoRepository.shared.applyExtensions(to: &req, method: method)
 
@@ -256,5 +256,144 @@ final class PulsarTests: XCTestCase {
         let foundMsg = repo.findMessage(by: "Pagination")
         XCTAssertNotNil(foundMsg, "应跨 Import 文件查找到 Pagination 结构体")
         XCTAssertEqual(foundMsg?.name, "Pagination")
+    }
+
+    // MARK: - 7. Bruno 风格层级继承与合并测试 (Hierarchical Configuration & Inheritance)
+
+    func testHierarchicalInheritanceResolution() {
+        let appState = AppState()
+
+        let colId = UUID()
+        let foldId = UUID()
+        let reqId = UUID()
+
+        var collection = CollectionModel(id: colId, name: "Core Services")
+        collection.sharedMetadata = [
+            MetadataHeader(key: "x-collection-id", value: "col-123"),
+            MetadataHeader(key: "x-app-env", value: "global-default")
+        ]
+        collection.auth = AuthConfig(type: .bearer, bearerToken: "collection-level-jwt")
+        collection.security = TLSConfig(mode: .tlsSystem)
+        collection.timeoutSeconds = 45.0
+
+        var folder = FolderModel(id: foldId, name: "User Module", collectionId: colId)
+        folder.sharedMetadata = [
+            MetadataHeader(key: "x-folder-id", value: "fold-456"),
+            MetadataHeader(key: "x-app-env", value: "folder-override") // 覆盖集合同名 Header
+        ]
+        folder.auth = AuthConfig(type: .apiKey, apiKeyName: "x-api-key", apiKeyValue: "folder-secret-key")
+
+        var request = RequestModel(
+            id: reqId,
+            name: "GetUserProfile",
+            collectionId: colId,
+            folderId: foldId
+        )
+        request.auth = AuthConfig(type: .inherit) // 声明继承
+        request.tls = TLSConfig(mode: .inherit)
+        request.metadata = [
+            MetadataHeader(key: "x-request-id", value: "req-789"),
+            MetadataHeader(key: "x-app-env", value: "request-override") // 最终覆盖
+        ]
+
+        collection.folders = [folder]
+        collection.requests = [request]
+        appState.workspace.collections = [collection]
+
+        let effective = appState.resolveEffectiveConfig(for: request)
+
+        // 验证 Auth 继承: Request 继承自 Folder
+        XCTAssertEqual(effective.effectiveAuth.type, .apiKey)
+        XCTAssertEqual(effective.effectiveAuth.apiKeyValue, "folder-secret-key")
+        XCTAssertTrue(effective.authSource.contains("User Module"))
+
+        // 验证 TLS 继承: Request 继承自 Collection
+        XCTAssertEqual(effective.effectiveRequest.tls.mode, .tlsSystem)
+        XCTAssertTrue(effective.securitySource.contains("Core Services"))
+
+        // 验证 Metadata 继承与逐级覆盖: x-app-env 应取 request-override
+        let effectiveHeaders = effective.effectiveRequest.metadata
+        let envHeader = effectiveHeaders.first { $0.key.lowercased() == "x-app-env" }
+        XCTAssertEqual(envHeader?.value, "request-override")
+
+        // 验证集合与文件夹的专属 Header 是否均合并入请求头
+        XCTAssertTrue(effectiveHeaders.contains { $0.key == "x-collection-id" && $0.value == "col-123" })
+        XCTAssertTrue(effectiveHeaders.contains { $0.key == "x-folder-id" && $0.value == "fold-456" })
+        XCTAssertTrue(effectiveHeaders.contains { $0.key == "x-request-id" && $0.value == "req-789" })
+    }
+
+    // MARK: - 8. Bruno 风格 Git 友好型目录导出与导入测试
+
+    func testCollectionDirectoryExportAndImport() throws {
+        let fileManager = FileManager.default
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("pulsar_test_\(UUID().uuidString)")
+        try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempDir) }
+
+        var collection = CollectionModel(name: "Payment Gateway")
+        collection.sharedMetadata = [MetadataHeader(key: "x-merchant-id", value: "m_999")]
+        collection.auth = AuthConfig(type: .bearer, bearerToken: "test_token_xyz")
+
+        let folder = FolderModel(name: "Refunds", collectionId: collection.id)
+        let req1 = RequestModel(name: "InitiateRefund", collectionId: collection.id, folderId: folder.id)
+        let req2 = RequestModel(name: "QueryStatus", collectionId: collection.id, folderId: nil)
+
+        collection.folders = [folder]
+        collection.requests = [req1, req2]
+
+        let env = EnvironmentModel(name: "Sandbox", variables: [VariableItem(key: "api_url", value: "https://sandbox.api")])
+
+        // 1. 导出为目录结构
+        let exportedDir = try CollectionDirectorySyncService.shared.exportCollection(
+            collection,
+            environments: [env],
+            to: tempDir
+        )
+
+        XCTAssertTrue(fileManager.fileExists(atPath: exportedDir.appendingPathComponent("collection.json").path))
+        XCTAssertTrue(fileManager.fileExists(atPath: exportedDir.appendingPathComponent("Refunds/folder.json").path))
+        XCTAssertTrue(fileManager.fileExists(atPath: exportedDir.appendingPathComponent("Refunds/InitiateRefund.grpc.json").path))
+        XCTAssertTrue(fileManager.fileExists(atPath: exportedDir.appendingPathComponent("QueryStatus.grpc.json").path))
+        XCTAssertTrue(fileManager.fileExists(atPath: exportedDir.appendingPathComponent("environments/Sandbox.json").path))
+
+        // 2. 从目录结构反向导入
+        let (importedCol, importedEnvs) = try CollectionDirectorySyncService.shared.importCollection(from: exportedDir)
+
+        XCTAssertEqual(importedCol.name, "Payment Gateway")
+        XCTAssertEqual(importedCol.sharedMetadata.first?.key, "x-merchant-id")
+        XCTAssertEqual(importedCol.auth.bearerToken, "test_token_xyz")
+        XCTAssertEqual(importedCol.folders.count, 1)
+        XCTAssertEqual(importedCol.folders.first?.name, "Refunds")
+        XCTAssertEqual(importedCol.requests.count, 2)
+        XCTAssertEqual(importedEnvs.first?.name, "Sandbox")
+    }
+
+    // MARK: - 9. 变量诊断引擎未解析变量侦测测试
+
+    func testUnresolvedVariablesDetection() {
+        let env = EnvironmentModel(
+            name: "Dev",
+            variables: [
+                VariableItem(key: "valid_host", value: "10.0.0.1"),
+                VariableItem(key: "valid_token", value: "abc")
+            ]
+        )
+
+        let payload = """
+        {
+          "host": "{{valid_host}}",
+          "missing": "{{unresolved_account_id}}",
+          "uuid": "{{$uuid}}",
+          "another_missing": "{{not_found_var}}"
+        }
+        """
+
+        let missingVars = EnvironmentEngine.shared.findUnresolvedVariables(
+            in: payload,
+            environment: env,
+            globalVariables: []
+        )
+
+        XCTAssertEqual(Set(missingVars), Set(["unresolved_account_id", "not_found_var"]))
     }
 }

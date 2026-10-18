@@ -24,6 +24,8 @@ public final class AppState: ObservableObject {
     // 模态弹窗控制
     @Published public var isEnvironmentModalPresented: Bool = false
     @Published public var isProtoExplorerPresented: Bool = false
+    @Published public var editingCollectionTarget: CollectionSettingsTarget? = nil
+    @Published public var editingFolderTarget: FolderSettingsTarget? = nil
 
     // 展开/折叠状态追踪 (Collection 与 Folder)
     @Published public var expandedCollectionIds: Set<UUID> = []
@@ -250,11 +252,146 @@ public final class AppState: ObservableObject {
         saveState()
     }
 
+    // MARK: - 层级配置与继承解析 (Hierarchical Inheritance Resolution)
+
+    public struct InheritedHeaderItem: Identifiable, Equatable {
+        public var id: UUID { header.id }
+        public var header: MetadataHeader
+        public var source: String
+
+        public init(header: MetadataHeader, source: String) {
+            self.header = header
+            self.source = source
+        }
+    }
+
+    public struct EffectiveRequestConfig {
+        public var effectiveRequest: RequestModel
+        public var effectiveAuth: AuthConfig
+        public var authSource: String
+        public var inheritedMetadata: [InheritedHeaderItem]
+        public var effectiveSecurity: TLSConfig
+        public var securitySource: String
+        public var effectiveTimeout: Double
+    }
+
+    public func parentCollection(for requestId: UUID) -> CollectionModel? {
+        for col in workspace.collections {
+            if col.requests.contains(where: { $0.id == requestId }) {
+                return col
+            }
+        }
+        return nil
+    }
+
+    public func parentFolder(for requestId: UUID) -> FolderModel? {
+        guard let col = parentCollection(for: requestId) else { return nil }
+        guard let req = col.requests.first(where: { $0.id == requestId }),
+              let folderId = req.folderId else { return nil }
+        return col.folders.first(where: { $0.id == folderId })
+    }
+
+    public func resolveEffectiveConfig(for request: RequestModel) -> EffectiveRequestConfig {
+        let parentCol = parentCollection(for: request.id)
+        let parentFold = parentFolder(for: request.id)
+
+        // 1. Auth 逐级继承: Request -> Folder -> Collection -> None
+        let effectiveAuth: AuthConfig
+        let authSource: String
+        if request.auth.type != .inherit {
+            effectiveAuth = request.auth
+            authSource = "请求独立配置"
+        } else if let fold = parentFold, fold.auth.type != .inherit {
+            effectiveAuth = fold.auth
+            authSource = "继承自文件夹 [\(fold.name)]"
+        } else if let col = parentCol, col.auth.type != .inherit && col.auth.type != .none {
+            effectiveAuth = col.auth
+            authSource = "继承自集合 [\(col.name)]"
+        } else {
+            effectiveAuth = AuthConfig(type: .none)
+            authSource = "无认证 (未配置)"
+        }
+
+        // 2. Metadata 逐级合并: Collection -> Folder -> Request (子级同名键覆盖父级)
+        var mergedHeadersMap: [String: MetadataHeader] = [:]
+        var inheritedList: [InheritedHeaderItem] = []
+
+        if let col = parentCol {
+            for h in col.sharedMetadata where h.isEnabled && !h.key.trimmingCharacters(in: .whitespaces).isEmpty {
+                mergedHeadersMap[h.key.lowercased()] = h
+                inheritedList.append(InheritedHeaderItem(header: h, source: "集合: \(col.name)"))
+            }
+        }
+
+        if let fold = parentFold {
+            for h in fold.sharedMetadata where h.isEnabled && !h.key.trimmingCharacters(in: .whitespaces).isEmpty {
+                mergedHeadersMap[h.key.lowercased()] = h
+                inheritedList.append(InheritedHeaderItem(header: h, source: "文件夹: \(fold.name)"))
+            }
+        }
+
+        for h in request.metadata where !h.key.trimmingCharacters(in: .whitespaces).isEmpty {
+            mergedHeadersMap[h.key.lowercased()] = h
+        }
+
+        let effectiveMetadata = Array(mergedHeadersMap.values)
+
+        // 3. Security / TLS 继承: Request -> Collection
+        let effectiveSecurity: TLSConfig
+        let securitySource: String
+        if request.tls.mode != .inherit {
+            effectiveSecurity = request.tls
+            securitySource = "请求独立配置"
+        } else if let col = parentCol {
+            effectiveSecurity = col.security
+            securitySource = "继承自集合 [\(col.name)]"
+        } else {
+            effectiveSecurity = TLSConfig(mode: .plaintext)
+            securitySource = "默认明文"
+        }
+
+        // 4. 超时继承
+        let effectiveTimeout: Double = (request.timeoutSeconds > 0) ? request.timeoutSeconds : (parentCol?.timeoutSeconds ?? 30.0)
+
+        var finalReq = request
+        finalReq.auth = effectiveAuth
+        finalReq.metadata = effectiveMetadata
+        finalReq.tls = effectiveSecurity
+        finalReq.timeoutSeconds = effectiveTimeout
+
+        return EffectiveRequestConfig(
+            effectiveRequest: finalReq,
+            effectiveAuth: effectiveAuth,
+            authSource: authSource,
+            inheritedMetadata: inheritedList,
+            effectiveSecurity: effectiveSecurity,
+            securitySource: securitySource,
+            effectiveTimeout: effectiveTimeout
+        )
+    }
+
+    public func updateCollection(_ collection: CollectionModel) {
+        if let idx = workspace.collections.firstIndex(where: { $0.id == collection.id }) {
+            workspace.collections[idx] = collection
+            saveState()
+        }
+    }
+
+    public func updateFolder(in collectionId: UUID, folder: FolderModel) {
+        if let cIdx = workspace.collections.firstIndex(where: { $0.id == collectionId }),
+           let fIdx = workspace.collections[cIdx].folders.firstIndex(where: { $0.id == folder.id }) {
+            workspace.collections[cIdx].folders[fIdx] = folder
+            saveState()
+        }
+    }
+
     // MARK: - 执行调用
 
     @MainActor
     public func executeCurrentRequest() {
         guard let req = activeRequest, !isExecuting else { return }
+
+        let effectiveConfig = resolveEffectiveConfig(for: req)
 
         isExecuting = true
         activeStreamEvents = []
@@ -262,7 +399,7 @@ public final class AppState: ObservableObject {
         executionTask = Task { [weak self] in
             guard let self = self else { return }
             let resp = await GRPCClientEngine.shared.execute(
-                request: req,
+                request: effectiveConfig.effectiveRequest,
                 activeEnvironment: self.activeEnvironment,
                 globalVariables: self.workspace.globalVariables,
                 onStreamEvent: { [weak self] event in
@@ -354,9 +491,62 @@ public final class AppState: ObservableObject {
             req.address.lowercased().contains(q)
         }
     }
+
+    // MARK: - Git 友好型多文件目录同步与导入导出
+
+    public func exportCollectionToDirectory(collectionId: UUID, targetDir: URL) {
+        guard let col = workspace.collections.first(where: { $0.id == collectionId }) else { return }
+        do {
+            try CollectionDirectorySyncService.shared.exportCollection(
+                col,
+                environments: workspace.environments,
+                to: targetDir
+            )
+        } catch {
+            print("Failed to export collection: \(error)")
+        }
+    }
+
+    public func importCollectionFromDirectory(from dir: URL) {
+        do {
+            let (importedCol, importedEnvs) = try CollectionDirectorySyncService.shared.importCollection(from: dir)
+            workspace.collections.append(importedCol)
+            expandedCollectionIds.insert(importedCol.id)
+
+            // 合并新导入的环境变量
+            for env in importedEnvs {
+                if !workspace.environments.contains(where: { $0.name == env.name }) {
+                    workspace.environments.append(env)
+                }
+            }
+            saveState()
+        } catch {
+            print("Failed to import collection: \(error)")
+        }
+    }
 }
 
 public enum SplitLayoutMode: String, Codable, CaseIterable {
     case horizontal = "左右并排"
     case vertical = "上下并排"
+}
+
+public struct CollectionSettingsTarget: Identifiable, Equatable {
+    public var id: UUID { collectionId }
+    public let collectionId: UUID
+
+    public init(collectionId: UUID) {
+        self.collectionId = collectionId
+    }
+}
+
+public struct FolderSettingsTarget: Identifiable, Equatable {
+    public var id: UUID { folderId }
+    public let collectionId: UUID
+    public let folderId: UUID
+
+    public init(collectionId: UUID, folderId: UUID) {
+        self.collectionId = collectionId
+        self.folderId = folderId
+    }
 }

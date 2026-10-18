@@ -248,7 +248,7 @@ public final class ProtoRepository: ObservableObject {
                         }
                     }
                 case .requireAuth:
-                    if request.auth.type == .none {
+                    if request.auth.type == .none || request.auth.type == .inherit {
                         request.auth.type = .bearer
                         request.auth.bearerToken = "{{jwt_token}}"
                     }

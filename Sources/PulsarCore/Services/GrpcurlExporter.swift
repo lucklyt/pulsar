@@ -23,7 +23,7 @@ public final class GrpcurlExporter {
 
         // 2. 安全配置
         switch request.tls.mode {
-        case .plaintext:
+        case .plaintext, .inherit:
             args.append("-plaintext")
         case .tlsSystem:
             if request.tls.insecureSkipVerify {
@@ -79,7 +79,7 @@ public final class GrpcurlExporter {
                 let base64 = Data(combo.utf8).base64EncodedString()
                 args.append("-H \"authorization: Basic \(base64)\"")
             }
-        case .none:
+        case .none, .inherit:
             break
         }
 

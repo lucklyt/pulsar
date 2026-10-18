@@ -132,4 +132,58 @@ public final class EnvironmentEngine {
         }
         return String(Int.random(in: 1...1000))
     }
+
+    /// 内置函数清单
+    public var availableBuiltins: [(key: String, desc: String)] {
+        [
+            ("$uuid", "随机 UUID (例如 e4eaaaf2-6434-4b52-9020-00c8872d4100)"),
+            ("$timestamp", "当前 Unix 秒级时间戳 (例如 1714000000)"),
+            ("$timestampMs", "当前毫秒时间戳 (例如 1714000000000)"),
+            ("$isoTimestamp", "标准 ISO8601 时间串 (例如 2026-10-18T12:00:00Z)"),
+            ("$randomInt", "随机整数 (1 到 1000)"),
+            ("$randomAlpha", "8位随机小写字母串")
+        ]
+    }
+
+    /// 校验某个变量名是否已定义
+    public func isVariableDefined(
+        _ varKey: String,
+        environment: EnvironmentModel? = nil,
+        globalVariables: [VariableItem] = [],
+        localVariables: [VariableItem] = []
+    ) -> Bool {
+        let k = varKey.trimmingCharacters(in: .whitespaces)
+        if evaluateDynamicFunction(k) != nil {
+            return true
+        }
+        if let env = environment, env.variables.contains(where: { $0.isEnabled && $0.key == k }) {
+            return true
+        }
+        if globalVariables.contains(where: { $0.isEnabled && $0.key == k }) {
+            return true
+        }
+        if localVariables.contains(where: { $0.isEnabled && $0.key == k }) {
+            return true
+        }
+        return false
+    }
+
+    /// 查找文本中所有未解析的未知变量名
+    public func findUnresolvedVariables(
+        in template: String,
+        environment: EnvironmentModel? = nil,
+        globalVariables: [VariableItem] = [],
+        localVariables: [VariableItem] = []
+    ) -> [String] {
+        let refs = extractReferencedVariables(from: template)
+        var unresolved: [String] = []
+        for ref in refs {
+            if !isVariableDefined(ref, environment: environment, globalVariables: globalVariables, localVariables: localVariables) {
+                if !unresolved.contains(ref) {
+                    unresolved.append(ref)
+                }
+            }
+        }
+        return unresolved
+    }
 }

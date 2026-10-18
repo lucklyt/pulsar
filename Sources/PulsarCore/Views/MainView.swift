@@ -33,7 +33,7 @@ public struct MainView: View {
                         // Bruno 风格灵活分栏：支持左右并排 (HSplitView) 与上下并排 (VSplitView)
                         if appState.layoutMode == .horizontal {
                             HSplitView {
-                                RequestEditorView(request: requestBinding)
+                                RequestEditorView(request: requestBinding, appState: appState)
                                     .frame(minWidth: 350, idealWidth: 480)
 
                                 ResponseInspectorView(
@@ -47,7 +47,7 @@ public struct MainView: View {
                             }
                         } else {
                             VSplitView {
-                                RequestEditorView(request: requestBinding)
+                                RequestEditorView(request: requestBinding, appState: appState)
                                     .frame(minHeight: 240, idealHeight: 320)
 
                                 ResponseInspectorView(
@@ -68,7 +68,23 @@ public struct MainView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .automatic) {
-                // 环境快速切换下拉菜单
+                // 生产环境安全高亮徽标 (Bruno 风格警示，防止在生产环境误操作)
+                if let activeEnv = appState.activeEnvironment, activeEnv.isProduction {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.shield.fill")
+                            .font(.system(size: 11))
+                        Text("PROD")
+                            .font(.system(size: 10, weight: .bold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.red)
+                    .cornerRadius(5)
+                    .help("当前已连接生产环境 [\(activeEnv.name)]，所有调用将作用于真实线上！")
+                }
+
+                // 环境快速切换下拉菜单 (带环境识别色圆点)
                 Picker("", selection: Binding<UUID?>(
                     get: { appState.workspace.activeEnvironmentId },
                     set: { appState.switchEnvironment(id: $0) }
@@ -76,10 +92,16 @@ public struct MainView: View {
                     Text("未选择环境 (No Env)").tag(nil as UUID?)
                     Divider()
                     ForEach(appState.workspace.environments) { env in
-                        Text(env.name).tag(env.id as UUID?)
+                        HStack {
+                            Circle()
+                                .fill(Color(hex: env.colorHex))
+                                .frame(width: 8, height: 8)
+                            Text(env.name)
+                        }
+                        .tag(env.id as UUID?)
                     }
                 }
-                .frame(width: 155)
+                .frame(width: 160)
 
                 // Bruno 标志性 Quick Eye 环境变量速览按钮
                 Button(action: {
