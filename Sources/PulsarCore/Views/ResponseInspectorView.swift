@@ -9,10 +9,12 @@ public struct ResponseInspectorView: View {
     @ObservedObject var appState: AppState
 
     @State private var selectedTab: ResponseTab = .body
+    @State private var isDiffCopied: Bool = false
 
     enum ResponseTab: String, CaseIterable, Identifiable {
         case body = "响应体"
         case assertions = "断言测试"
+        case diff = "快照对比"
         case headers = "响应头"
         case timeline = "时间线"
         case stats = "统计指标"
@@ -35,6 +37,9 @@ public struct ResponseInspectorView: View {
                     } else if let req = currentRequest, !req.assertions.isEmpty {
                         tabButton(.assertions, badge: "\(req.assertions.filter { $0.isEnabled }.count)")
                     }
+
+                    let hasSnapshot = (currentRequest != nil && appState.responseSnapshots[currentRequest!.id] != nil)
+                    tabButton(.diff, badge: hasSnapshot ? "快照" : nil)
 
                     let totalHeaders = (response?.initialMetadata.count ?? 0) + (response?.trailingMetadata.count ?? 0)
                     tabButton(.headers, badge: totalHeaders > 0 ? "\(totalHeaders)" : nil)
@@ -65,6 +70,8 @@ public struct ResponseInspectorView: View {
                     responseBodyView
                 case .assertions:
                     assertionsResultsView
+                case .diff:
+                    responseDiffView
                 case .timeline:
                     streamTimelineView
                 case .headers:
@@ -319,6 +326,265 @@ public struct ResponseInspectorView: View {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: - 2.5 响应快照对比视图 (Response Snapshot & JSON Semantic Diff)
+
+    @ViewBuilder
+    private var responseDiffView: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let req = currentRequest {
+                let snapshot = appState.responseSnapshots[req.id]
+
+                if let base = snapshot {
+                    if let curr = response {
+                        let report = ResponseDiffEngine.shared.compare(baseline: base, current: curr)
+
+                        // 顶栏操作区
+                        HStack(spacing: 8) {
+                            // 快照时间标签
+                            HStack(spacing: 4) {
+                                Image(systemName: "camera.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.accentColor)
+                                Text("基准快照 (\(base.statusName))")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+
+                            Spacer()
+
+                            // 更新快照
+                            Button("更新快照") {
+                                appState.saveResponseSnapshot(for: req.id, response: curr)
+                            }
+                            .font(.system(size: 11))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color(NSColor.controlBackgroundColor))
+                            .cornerRadius(4)
+                            .buttonStyle(.plain)
+
+                            // 复制 Diff 报告
+                            Button(action: {
+                                let text = report.exportMarkdownReport()
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(text, forType: .string)
+                                isDiffCopied = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                                    isDiffCopied = false
+                                }
+                            }) {
+                                HStack(spacing: 3) {
+                                    Image(systemName: isDiffCopied ? "checkmark" : "doc.on.doc")
+                                    Text(isDiffCopied ? "已复制" : "复制 Diff")
+                                }
+                                .font(.system(size: 11))
+                            }
+                            .foregroundColor(isDiffCopied ? .green : .primary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color(NSColor.controlBackgroundColor))
+                            .cornerRadius(4)
+                            .buttonStyle(.plain)
+
+                            // 清除快照
+                            Button("清除") {
+                                appState.clearResponseSnapshot(for: req.id)
+                            }
+                            .font(.system(size: 11))
+                            .foregroundColor(.red)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.red.opacity(0.1))
+                            .cornerRadius(4)
+                            .buttonStyle(.plain)
+                        }
+
+                        // 差异指标对比横幅
+                        HStack(spacing: 8) {
+                            if report.isIdentical {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "checkmark.seal.fill")
+                                        .foregroundColor(.green)
+                                    Text("响应数据完全一致 (Zero Diff)")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundColor(.green)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.green.opacity(0.1))
+                                .cornerRadius(4)
+                            } else {
+                                if report.addedCount > 0 {
+                                    Text("+\(report.addedCount) 新增")
+                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        .foregroundColor(.green)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3)
+                                        .background(Color.green.opacity(0.12))
+                                        .cornerRadius(4)
+                                }
+
+                                if report.removedCount > 0 {
+                                    Text("-\(report.removedCount) 删除")
+                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        .foregroundColor(.red)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3)
+                                        .background(Color.red.opacity(0.12))
+                                        .cornerRadius(4)
+                                }
+                            }
+
+                            // 耗时差
+                            let latStr = String(format: "%+.1f ms", report.latencyDeltaMs)
+                            HStack(spacing: 3) {
+                                Image(systemName: "bolt")
+                                Text("耗时: \(latStr)")
+                            }
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(report.latencyDeltaMs <= 0 ? .green : .orange)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.gray.opacity(0.1))
+                            .cornerRadius(4)
+
+                            // 体积差
+                            let sizeStr = report.sizeDeltaBytes >= 0 ? "+\(report.sizeDeltaBytes) B" : "\(report.sizeDeltaBytes) B"
+                            HStack(spacing: 3) {
+                                Image(systemName: "archivebox")
+                                Text("体积: \(sizeStr)")
+                            }
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.gray.opacity(0.1))
+                            .cornerRadius(4)
+
+                            Spacer()
+                        }
+
+                        // Diff 行展示区
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 0) {
+                                ForEach(report.lines) { line in
+                                    HStack(alignment: .top, spacing: 6) {
+                                        // 旧行号
+                                        Text(line.oldLineNumber.map { "\($0)" } ?? " ")
+                                            .frame(width: 26, alignment: .trailing)
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundColor(.secondary.opacity(0.6))
+
+                                        // 新行号
+                                        Text(line.newLineNumber.map { "\($0)" } ?? " ")
+                                            .frame(width: 26, alignment: .trailing)
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundColor(.secondary.opacity(0.6))
+
+                                        // 符号
+                                        Text(line.kind.rawValue)
+                                            .frame(width: 12, alignment: .center)
+                                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                            .foregroundColor(line.kind == .added ? .green : (line.kind == .removed ? .red : .secondary))
+
+                                        // 内容
+                                        Text(line.content)
+                                            .font(.system(size: 11, design: .monospaced))
+                                            .foregroundColor(line.kind == .added ? .green : (line.kind == .removed ? .red : .primary))
+                                            .textSelection(.enabled)
+
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 1)
+                                    .background(line.kind == .added ? Color.green.opacity(0.1) : (line.kind == .removed ? Color.red.opacity(0.1) : Color.clear))
+                                }
+                            }
+                            .padding(6)
+                        }
+                        .background(Color(NSColor.textBackgroundColor))
+                        .cornerRadius(6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.gray.opacity(0.18), lineWidth: 1)
+                        )
+
+                    } else {
+                        // 有快照但当前未发起请求
+                        VStack(spacing: 12) {
+                            Spacer()
+                            Image(systemName: "camera.fill")
+                                .font(.system(size: 32))
+                                .foregroundColor(.accentColor)
+                            Text("已保存基准快照 (状态: \(base.statusName), 耗时: \(String(format: "%.1f", base.durationMs)) ms)")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("点击顶部【发送 (⌘↵)】即可将最新响应与此快照进行实时差异对比")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                            Button("清除此快照") {
+                                appState.clearResponseSnapshot(for: req.id)
+                            }
+                            .font(.system(size: 11))
+                            .foregroundColor(.red)
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                } else {
+                    // 无快照
+                    VStack(spacing: 12) {
+                        Spacer()
+                        Image(systemName: "camera.viewfinder")
+                            .font(.system(size: 36))
+                            .foregroundColor(.secondary)
+                        Text("暂无基准快照 (No Baseline Snapshot)")
+                            .font(.system(size: 13, weight: .bold))
+                        Text("将当前响应保存为快照后，可实时检测后端代码变更后的字段修改、延迟增减与状态码差异。")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 380)
+
+                        if let curr = response {
+                            Button(action: {
+                                appState.saveResponseSnapshot(for: req.id, response: curr)
+                            }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "camera.fill")
+                                    Text("保存当前响应为基线快照")
+                                        .font(.system(size: 12, weight: .semibold))
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 6)
+                                .background(Color.accentColor)
+                                .foregroundColor(.white)
+                                .cornerRadius(6)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            Text("请先发送一次请求以捕获响应")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.orange)
+                        }
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else {
+                VStack(spacing: 8) {
+                    Spacer()
+                    Image(systemName: "cursorarrow.and.square.on.square.dashed")
+                        .font(.system(size: 28))
+                        .foregroundColor(.secondary)
+                    Text("请先在左侧选择一个有效请求")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }

@@ -28,6 +28,7 @@ public final class AppState: ObservableObject {
     @Published public var editingCollectionTarget: CollectionSettingsTarget? = nil
     @Published public var editingFolderTarget: FolderSettingsTarget? = nil
     @Published public var activeRunnerConfig: CollectionRunConfig? = nil
+    @Published public var responseSnapshots: [UUID: RPCResponse] = [:]
 
     // 展开/折叠状态追踪 (Collection 与 Folder)
     @Published public var expandedCollectionIds: Set<UUID> = []
@@ -493,6 +494,16 @@ public final class AppState: ObservableObject {
 
     public func saveState() {
         try? storage.saveWorkspace(workspace)
+    }
+
+    // MARK: - 响应快照管理 (Response Snapshots)
+
+    public func saveResponseSnapshot(for requestId: UUID, response: RPCResponse) {
+        responseSnapshots[requestId] = response
+    }
+
+    public func clearResponseSnapshot(for requestId: UUID) {
+        responseSnapshots.removeValue(forKey: requestId)
     }
 
     // MARK: - Bruno 风格操作辅助

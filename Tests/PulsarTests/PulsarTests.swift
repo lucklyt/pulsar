@@ -1204,6 +1204,147 @@ final class PulsarTests: XCTestCase {
         XCTAssertTrue(mdReport.contains("1. Login"))
         XCTAssertTrue(mdReport.contains("2. GetProfile"))
     }
+
+    // MARK: - 23. EnvironmentEngine 加密散列与高级动态数据生成测试
+
+    func testEnvironmentEngineCryptoAndGenerators() {
+        let engine = EnvironmentEngine.shared
+
+        // 1. 动态邮箱、IP、手机号
+        let email = engine.resolve(template: "{{$randomEmail}}")
+        XCTAssertTrue(email.hasPrefix("user_") && email.hasSuffix("@example.com"))
+
+        let ip = engine.resolve(template: "{{$randomIPv4}}")
+        let ipParts = ip.components(separatedBy: ".")
+        XCTAssertEqual(ipParts.count, 4)
+
+        let phone = engine.resolve(template: "{{$randomPhone}}")
+        XCTAssertTrue(phone.hasPrefix("138"))
+        XCTAssertEqual(phone.count, 11)
+
+        // 2. Base64 编解码
+        let b64Encoded = engine.resolve(template: "{{$base64Encode(\"Pulsar\")}}")
+        XCTAssertEqual(b64Encoded, "UHVsc2Fy")
+
+        let b64Decoded = engine.resolve(template: "{{$base64Decode(\"UHVsc2Fy\")}}")
+        XCTAssertEqual(b64Decoded, "Pulsar")
+
+        // 3. SHA-256 与 MD5
+        // echo -n "admin123" | shasum -a 256 -> 240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9
+        let sha = engine.resolve(template: "{{$sha256(\"admin123\")}}")
+        XCTAssertEqual(sha, "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9")
+
+        // echo -n "admin123" | md5 -> 0192023a7bbd73250516f069df18b500
+        let md5 = engine.resolve(template: "{{$md5(\"admin123\")}}")
+        XCTAssertEqual(md5, "0192023a7bbd73250516f069df18b500")
+    }
+
+    // MARK: - 24. Git 目录机密物理隔离与 .gitignore 自动防护测试
+
+    func testCollectionDirectorySecretsIsolation() throws {
+        let syncService = CollectionDirectorySyncService.shared
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        var col = CollectionModel(name: "SecuritySuite")
+        let req = RequestModel(name: "SecretReq", serviceName: "sec.SecService", methodName: "DoSec")
+        col.requests.append(req)
+
+        let envWithSecret = EnvironmentModel(
+            name: "ProdEnv",
+            variables: [
+                VariableItem(key: "public_host", value: "api.company.com", isSecret: false),
+                VariableItem(key: "api_secret_key", value: "sk_live_998877665544", isSecret: true)
+            ]
+        )
+
+        // 1. 导出集合与带机密的环境
+        let exportedDir = try syncService.exportCollection(col, environments: [envWithSecret], to: tempDir)
+
+        // 2. 验证 .gitignore 存在且包含机密隔离规则
+        let gitignorePath = exportedDir.appendingPathComponent(".gitignore")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: gitignorePath.path))
+        let gitignoreContent = try String(contentsOf: gitignorePath, encoding: .utf8)
+        XCTAssertTrue(gitignoreContent.contains("environments/*.secrets.json"))
+
+        // 3. 验证公开环境变量文件脱敏
+        let publicEnvPath = exportedDir.appendingPathComponent("environments/ProdEnv.json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: publicEnvPath.path))
+        let publicEnvData = try Data(contentsOf: publicEnvPath)
+        let publicEnv = try JSONDecoder().decode(EnvironmentModel.self, from: publicEnvData)
+        let secretItemInPublic = publicEnv.variables.first { $0.key == "api_secret_key" }
+        XCTAssertEqual(secretItemInPublic?.value, "", "公开 JSON 中的敏感变量值必须被置空脱敏")
+
+        // 4. 验证物理独立的 .secrets.json 存在且保存真实机密
+        let secretEnvPath = exportedDir.appendingPathComponent("environments/ProdEnv.secrets.json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: secretEnvPath.path))
+        let secretEnvData = try Data(contentsOf: secretEnvPath)
+        let secretVars = try JSONDecoder().decode([VariableItem].self, from: secretEnvData)
+        XCTAssertEqual(secretVars.first?.value, "sk_live_998877665544")
+
+        // 5. 导入该目录，验证本地自动将 .secrets.json 中的真实机密恢复合并
+        let imported = try syncService.importCollection(from: exportedDir)
+        let importedEnv = imported.environments.first { $0.name == "ProdEnv" }
+        let restoredSecret = importedEnv?.variables.first { $0.key == "api_secret_key" }
+        XCTAssertEqual(restoredSecret?.value, "sk_live_998877665544", "导入时应自动将 .secrets.json 机密值合并恢复")
+        XCTAssertTrue(restoredSecret?.isSecret == true)
+    }
+
+    // MARK: - 25. ResponseDiffEngine 响应快照与 JSON 语义 Diff 测试
+
+    func testResponseDiffEngine() {
+        let diffEngine = ResponseDiffEngine.shared
+
+        let baseResp = RPCResponse(
+            requestId: UUID(),
+            statusCode: 0,
+            statusName: "OK",
+            durationMs: 15.0,
+            responsePayload: """
+            {
+              "id": 100,
+              "name": "Alice",
+              "role": "Developer"
+            }
+            """
+        )
+
+        // 1. 完全一致测试
+        let identicalReport = diffEngine.compare(baseline: baseResp, current: baseResp)
+        XCTAssertTrue(identicalReport.isIdentical)
+        XCTAssertEqual(identicalReport.addedCount, 0)
+        XCTAssertEqual(identicalReport.removedCount, 0)
+        XCTAssertEqual(identicalReport.latencyDeltaMs, 0.0)
+
+        // 2. 修改与新增测试
+        let modifiedResp = RPCResponse(
+            requestId: UUID(),
+            statusCode: 0,
+            statusName: "OK",
+            durationMs: 25.0,
+            responsePayload: """
+            {
+              "id": 100,
+              "name": "Alice Cooper",
+              "role": "Developer",
+              "team": "Architecture"
+            }
+            """
+        )
+
+        let diffReport = diffEngine.compare(baseline: baseResp, current: modifiedResp)
+        XCTAssertFalse(diffReport.isIdentical)
+        XCTAssertTrue(diffReport.addedCount > 0)
+        XCTAssertEqual(diffReport.latencyDeltaMs, 10.0)
+        XCTAssertFalse(diffReport.statusCodeChanged)
+
+        // 3. 验证 Markdown 报告生成
+        let reportMD = diffReport.exportMarkdownReport()
+        XCTAssertTrue(reportMD.contains("# Pulsar 响应快照差异对比报告"))
+        XCTAssertTrue(reportMD.contains("载荷 Diff 详情"))
+        XCTAssertTrue(reportMD.contains("+"))
+    }
 }
 
 // MARK: - Mock URLProtocol for Nacos HTTP 测试

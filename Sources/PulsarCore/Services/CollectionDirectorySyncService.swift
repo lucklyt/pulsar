@@ -103,16 +103,53 @@ public final class CollectionDirectorySyncService {
             try reqData.write(to: reqFile, options: .atomic)
         }
 
-        // 4. 导出环境配置 (如果提供)
+        // 4. 导出环境配置 (支持本地 Secrets 物理隔离与自动防泄漏保护)
         if !environments.isEmpty {
             let envsDir = collectionDir.appendingPathComponent("environments", isDirectory: true)
             try fileManager.createDirectory(at: envsDir, withIntermediateDirectories: true)
 
             for env in environments {
                 let safeEnvName = sanitizeFileName(env.name)
+                var publicVars: [VariableItem] = []
+                var secretVars: [VariableItem] = []
+
+                for v in env.variables {
+                    if v.isSecret {
+                        // 公开版本脱敏：保留键名与开关，清空机密值，防止 Git 泄密
+                        var sanitized = v
+                        sanitized.value = ""
+                        publicVars.append(sanitized)
+                        secretVars.append(v)
+                    } else {
+                        publicVars.append(v)
+                    }
+                }
+
+                var publicEnv = env
+                publicEnv.variables = publicVars
                 let envFile = envsDir.appendingPathComponent("\(safeEnvName).json")
-                let envData = try encoder.encode(env)
+                let envData = try encoder.encode(publicEnv)
                 try envData.write(to: envFile, options: .atomic)
+
+                // 物理独立保存机密文件
+                if !secretVars.isEmpty {
+                    let secFile = envsDir.appendingPathComponent("\(safeEnvName).secrets.json")
+                    let secData = try encoder.encode(secretVars)
+                    try secData.write(to: secFile, options: .atomic)
+                }
+            }
+
+            // 5. 自动生成 .gitignore 文件，杜绝机密进入版本控制系统
+            let gitignoreContent = """
+            # Pulsar Environment Secrets Isolation (Auto-generated)
+            # Never commit local secrets to version control
+            environments/*.secrets.json
+            *.secrets.json
+            .env*
+            """
+            let gitignoreFile = collectionDir.appendingPathComponent(".gitignore")
+            if !fileManager.fileExists(atPath: gitignoreFile.path) {
+                try? gitignoreContent.write(to: gitignoreFile, atomically: true, encoding: .utf8)
             }
         }
 
@@ -155,11 +192,26 @@ public final class CollectionDirectorySyncService {
 
             if isDir {
                 if item.lastPathComponent == "environments" {
-                    // 读取环境定义
+                    // 读取环境定义 (自动合并公开变量与本地 .secrets.json 机密文件)
                     let envFiles = (try? fileManager.contentsOfDirectory(at: item, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
-                    for ef in envFiles where ef.pathExtension == "json" {
+                    for ef in envFiles where ef.pathExtension == "json" && !ef.lastPathComponent.contains(".secrets.json") {
                         if let d = try? Data(contentsOf: ef),
-                           let env = try? decoder.decode(EnvironmentModel.self, from: d) {
+                           var env = try? decoder.decode(EnvironmentModel.self, from: d) {
+                            // 检查是否存在同名本地机密文件 <env_name>.secrets.json
+                            let baseName = ef.deletingPathExtension().lastPathComponent
+                            let secFile = item.appendingPathComponent("\(baseName).secrets.json")
+                            if fileManager.fileExists(atPath: secFile.path),
+                               let secData = try? Data(contentsOf: secFile),
+                               let secretItems = try? decoder.decode([VariableItem].self, from: secData) {
+                                for sec in secretItems {
+                                    if let idx = env.variables.firstIndex(where: { $0.key == sec.key }) {
+                                        env.variables[idx].value = sec.value
+                                        env.variables[idx].isSecret = true
+                                    } else {
+                                        env.variables.append(sec)
+                                    }
+                                }
+                            }
                             environments.append(env)
                         }
                     }
