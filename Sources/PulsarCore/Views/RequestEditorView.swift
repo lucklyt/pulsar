@@ -274,13 +274,35 @@ public struct RequestEditorView: View {
 
                 Spacer()
 
-                Button(action: {
-                    request.metadata.append(MetadataHeader(key: "", value: ""))
-                }) {
-                    Label("添加行", systemImage: "plus")
-                        .font(.system(size: 11))
+                // Bruno 风格模式切换分段控制器：表格 (Key-Value) vs 批量编辑 (Bulk Edit)
+                Picker("", selection: Binding<Bool>(
+                    get: { isBulkHeaderEdit },
+                    set: { willBeBulk in
+                        if willBeBulk {
+                            bulkHeaderText = HeaderBulkConverter.toBulkText(headers: request.metadata)
+                        } else {
+                            request.metadata = HeaderBulkConverter.fromBulkText(bulkHeaderText)
+                            appState.markDirty(id: request.id)
+                        }
+                        isBulkHeaderEdit = willBeBulk
+                    }
+                )) {
+                    Text("表格").tag(false)
+                    Text("批量编辑 (Bulk)").tag(true)
                 }
-                .buttonStyle(.borderedProminent)
+                .pickerStyle(.segmented)
+                .frame(width: 145)
+
+                if !isBulkHeaderEdit {
+                    Button(action: {
+                        request.metadata.append(MetadataHeader(key: "", value: ""))
+                        appState.markDirty(id: request.id)
+                    }) {
+                        Label("添加行", systemImage: "plus")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
             }
 
             // 1. 继承自上级的共享请求头 (Bruno 风格继承层级展示)
@@ -390,7 +412,56 @@ public struct RequestEditorView: View {
                 .cornerRadius(6)
             }
 
-            if request.metadata.isEmpty {
+            if isBulkHeaderEdit {
+                // Bruno 风格 Bulk Edit 纯文本多行编辑模式
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Image(systemName: "doc.text")
+                            .foregroundColor(.accentColor)
+                            .font(.system(size: 11))
+                        Text("每行格式为 `Key: Value`，以 # 开头的行为禁用项。可直接从 cURL 或日志中一键粘贴！")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button("清空") {
+                            bulkHeaderText = ""
+                            request.metadata = []
+                            appState.markDirty(id: request.id)
+                        }
+                        .font(.system(size: 10))
+                        .buttonStyle(.bordered)
+                    }
+
+                    TextEditor(text: Binding(
+                        get: { bulkHeaderText },
+                        set: {
+                            bulkHeaderText = $0
+                            request.metadata = HeaderBulkConverter.fromBulkText($0)
+                            appState.markDirty(id: request.id)
+                        }
+                    ))
+                    .font(.system(size: 11, design: .monospaced))
+                    .padding(6)
+                    .background(Color(NSColor.controlBackgroundColor))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                    )
+
+                    HStack {
+                        let lines = bulkHeaderText.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                        let disabledCount = lines.filter {
+                            let t = $0.trimmingCharacters(in: .whitespaces)
+                            return t.starts(with: "#") || t.starts(with: "//")
+                        }.count
+                        Text("共识别 \(lines.count) 项 Header (其中 \(disabledCount) 项已禁用)")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    }
+                }
+            } else if request.metadata.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
                     Image(systemName: "list.bullet.rectangle")
@@ -401,6 +472,7 @@ public struct RequestEditorView: View {
                         .foregroundColor(.secondary)
                     Button("添加专属请求头") {
                         request.metadata.append(MetadataHeader(key: "x-client-version", value: "2.0.0"))
+                        appState.markDirty(id: request.id)
                     }
                     .font(.system(size: 11))
                     .buttonStyle(.bordered)
@@ -408,13 +480,13 @@ public struct RequestEditorView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                // Bruno 表格式 Key-Value 列表
+                // Bruno 表格式 Key-Value 列表 (集成 Header 智能补全与预设)
                 VStack(spacing: 0) {
                     // 表头
                     HStack(spacing: 8) {
                         Text("").frame(width: 20)
-                        Text("键名 (Header Key)").frame(width: 180, alignment: .leading)
-                        Text("键值 (支持变量 {{var}})").frame(maxWidth: .infinity, alignment: .leading)
+                        Text("键名 (Header Key / 补全)").frame(width: 190, alignment: .leading)
+                        Text("键值 (支持变量 {{var}} 与常用预置)").frame(maxWidth: .infinity, alignment: .leading)
                         Text("").frame(width: 30)
                     }
                     .font(.system(size: 10, weight: .bold))
@@ -428,22 +500,49 @@ public struct RequestEditorView: View {
                         VStack(spacing: 4) {
                             ForEach($request.metadata) { $header in
                                 HStack(spacing: 8) {
-                                    Toggle("", isOn: $header.isEnabled)
-                                        .toggleStyle(.checkbox)
-                                        .labelsHidden()
-                                        .frame(width: 20)
+                                    Toggle("", isOn: Binding(
+                                        get: { header.isEnabled },
+                                        set: {
+                                            header.isEnabled = $0
+                                            appState.markDirty(id: request.id)
+                                        }
+                                    ))
+                                    .toggleStyle(.checkbox)
+                                    .labelsHidden()
+                                    .frame(width: 20)
 
-                                    TextField("header-name", text: $header.key)
-                                        .font(.system(size: 11, design: .monospaced))
-                                        .textFieldStyle(.roundedBorder)
-                                        .frame(width: 180)
+                                    HeaderKeyAutocompleteField(
+                                        key: Binding(
+                                            get: { header.key },
+                                            set: {
+                                                header.key = $0
+                                                appState.markDirty(id: request.id)
+                                            }
+                                        ),
+                                        onSelectDefinition: { def in
+                                            if header.value.isEmpty, let firstVal = def.presetValues.first {
+                                                header.value = firstVal
+                                            }
+                                            appState.markDirty(id: request.id)
+                                        }
+                                    )
+                                    .frame(width: 190)
 
-                                    TextField("header value", text: $header.value)
-                                        .font(.system(size: 11, design: .monospaced))
-                                        .textFieldStyle(.roundedBorder)
+                                    HeaderValueAutocompleteField(
+                                        value: Binding(
+                                            get: { header.value },
+                                            set: {
+                                                header.value = $0
+                                                appState.markDirty(id: request.id)
+                                            }
+                                        ),
+                                        headerKey: header.key,
+                                        appState: appState
+                                    )
 
                                     Button(action: {
                                         request.metadata.removeAll { $0.id == header.id }
+                                        appState.markDirty(id: request.id)
                                     }) {
                                         Image(systemName: "trash")
                                             .foregroundColor(.red.opacity(0.8))

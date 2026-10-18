@@ -10,6 +10,8 @@ public struct FolderSettingsView: View {
 
     @State private var selectedTab: FolderTab = .headers
     @State private var localFolder: FolderModel
+    @State private var isBulkHeaderEdit: Bool = false
+    @State private var bulkHeaderText: String = ""
 
     enum FolderTab: String, CaseIterable, Identifiable {
         case headers = "共享请求头"
@@ -121,16 +123,64 @@ public struct FolderSettingsView: View {
                         .foregroundColor(.secondary)
                 }
                 Spacer()
-                Button(action: {
-                    localFolder.sharedMetadata.append(MetadataHeader(key: "", value: ""))
-                }) {
-                    Label("添加 Header", systemImage: "plus")
-                        .font(.system(size: 11))
+
+                // Bruno 风格模式切换
+                Picker("", selection: Binding<Bool>(
+                    get: { isBulkHeaderEdit },
+                    set: { willBeBulk in
+                        if willBeBulk {
+                            bulkHeaderText = HeaderBulkConverter.toBulkText(headers: localFolder.sharedMetadata)
+                        } else {
+                            localFolder.sharedMetadata = HeaderBulkConverter.fromBulkText(bulkHeaderText)
+                        }
+                        isBulkHeaderEdit = willBeBulk
+                    }
+                )) {
+                    Text("表格").tag(false)
+                    Text("批量编辑 (Bulk)").tag(true)
                 }
-                .buttonStyle(.borderedProminent)
+                .pickerStyle(.segmented)
+                .frame(width: 140)
+
+                if !isBulkHeaderEdit {
+                    Button(action: {
+                        localFolder.sharedMetadata.append(MetadataHeader(key: "", value: ""))
+                    }) {
+                        Label("添加 Header", systemImage: "plus")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
             }
 
-            if localFolder.sharedMetadata.isEmpty {
+            if isBulkHeaderEdit {
+                VStack(alignment: .leading, spacing: 6) {
+                    TextEditor(text: Binding(
+                        get: { bulkHeaderText },
+                        set: {
+                            bulkHeaderText = $0
+                            localFolder.sharedMetadata = HeaderBulkConverter.fromBulkText($0)
+                        }
+                    ))
+                    .font(.system(size: 11, design: .monospaced))
+                    .frame(height: 200)
+                    .padding(6)
+                    .background(Color(NSColor.controlBackgroundColor))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                    )
+
+                    HStack {
+                        let lines = bulkHeaderText.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                        Text("共识别 \(lines.count) 项文件夹共享 Header (格式: key: value)")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    }
+                }
+            } else if localFolder.sharedMetadata.isEmpty {
                 VStack(spacing: 8) {
                     Spacer().frame(height: 30)
                     Text("当前文件夹暂无专属共享 Header，会自动继承集合级配置。")
@@ -143,8 +193,8 @@ public struct FolderSettingsView: View {
                 VStack(spacing: 6) {
                     HStack(spacing: 8) {
                         Text("").frame(width: 20)
-                        Text("键名 (Header Key)").frame(width: 170, alignment: .leading)
-                        Text("键值 (支持 {{var}})").frame(maxWidth: .infinity, alignment: .leading)
+                        Text("键名 (Header Key / 补全)").frame(width: 180, alignment: .leading)
+                        Text("键值 (支持 {{var}} 与预设)").frame(maxWidth: .infinity, alignment: .leading)
                         Text("").frame(width: 24)
                     }
                     .font(.system(size: 10, weight: .bold))
@@ -159,14 +209,21 @@ public struct FolderSettingsView: View {
                                 .labelsHidden()
                                 .frame(width: 20)
 
-                            TextField("header-key", text: $header.key)
-                                .font(.system(size: 11, design: .monospaced))
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 170)
+                            HeaderKeyAutocompleteField(
+                                key: $header.key,
+                                onSelectDefinition: { def in
+                                    if header.value.isEmpty, let firstVal = def.presetValues.first {
+                                        header.value = firstVal
+                                    }
+                                }
+                            )
+                            .frame(width: 180)
 
-                            TextField("header-value", text: $header.value)
-                                .font(.system(size: 11, design: .monospaced))
-                                .textFieldStyle(.roundedBorder)
+                            HeaderValueAutocompleteField(
+                                value: $header.value,
+                                headerKey: header.key,
+                                appState: appState
+                            )
 
                             Button(action: {
                                 localFolder.sharedMetadata.removeAll { $0.id == header.id }

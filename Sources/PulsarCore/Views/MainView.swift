@@ -125,13 +125,25 @@ public struct MainView: View {
                 }
                 .help("切换编辑器与响应面板布局 (左右并排 / 上下并排)")
 
-                // Proto 仓库与 Import Path 配置按键
+                // 全局极速跳转 (⌘P Quick Open)
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        appState.isQuickOpenPresented.toggle()
+                    }
+                }) {
+                    Image(systemName: "magnifyingglass")
+                }
+                .keyboardShortcut("p", modifiers: .command)
+                .help("全局极速跳转到请求、服务或方法 (⌘P)")
+
+                // Proto 仓库与 Import Path 配置按键 (⌘⇧P)
                 Button(action: {
                     appState.isProtoExplorerPresented = true
                 }) {
                     Image(systemName: "doc.badge.gearshape")
                 }
-                .help("打开本地 Proto 仓库与 Import Path 路径管理 (⌘P)")
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+                .help("打开本地 Proto 仓库与 Import Path 路径管理 (⌘⇧P)")
 
                 // 环境管理模态弹窗按键
                 Button(action: {
@@ -147,6 +159,7 @@ public struct MainView: View {
                 }) {
                     Image(systemName: "square.and.pencil")
                 }
+                .keyboardShortcut("n", modifiers: .command)
                 .help("新建 gRPC 请求 (⌘N)")
             }
         }
@@ -156,6 +169,12 @@ public struct MainView: View {
         .sheet(isPresented: $appState.isProtoExplorerPresented) {
             ProtoExplorerView(appState: appState)
                 .frame(minWidth: 880, minHeight: 560)
+        }
+        .overlay {
+            if appState.isQuickOpenPresented {
+                QuickOpenPaletteView(appState: appState, isPresented: $appState.isQuickOpenPresented)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            }
         }
     }
 

@@ -20,6 +20,7 @@ public final class AppState: ObservableObject {
     @Published public var dirtyTabIds: Set<UUID> = []
     @Published public var layoutMode: SplitLayoutMode = .horizontal
     @Published public var isQuickEnvPopoverPresented: Bool = false
+    @Published public var isQuickOpenPresented: Bool = false
 
     // 模态弹窗控制
     @Published public var isEnvironmentModalPresented: Bool = false
@@ -70,6 +71,35 @@ public final class AppState: ObservableObject {
     public var activeResponse: RPCResponse? {
         guard let id = activeTabId else { return nil }
         return responses[id]
+    }
+
+    // MARK: - 快速直达 (Quick Open) 请求索引与面包屑
+    public struct RequestPathItem: Identifiable, Equatable {
+        public var id: UUID { request.id }
+        public let request: RequestModel
+        public let collectionName: String
+        public let folderName: String?
+
+        public init(request: RequestModel, collectionName: String, folderName: String?) {
+            self.request = request
+            self.collectionName = collectionName
+            self.folderName = folderName
+        }
+    }
+
+    public func allRequestsWithBreadcrumbs() -> [RequestPathItem] {
+        var items: [RequestPathItem] = []
+        for col in workspace.collections {
+            for req in col.requests {
+                let folder = col.folders.first(where: { $0.id == req.folderId })
+                items.append(RequestPathItem(
+                    request: req,
+                    collectionName: col.name,
+                    folderName: folder?.name
+                ))
+            }
+        }
+        return items
     }
 
     // MARK: - 标签页 (Tabs) 控制

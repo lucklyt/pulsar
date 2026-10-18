@@ -822,6 +822,104 @@ final class PulsarTests: XCTestCase {
         XCTAssertNil(dict["disabled_var"])
         XCTAssertNil(dict[""])
     }
+
+    // MARK: - 16. Bruno 风格 Header Bulk Edit 与 HeaderCatalog 智能知识库测试
+
+    func testHeaderBulkConverter() {
+        let rawBulkText = """
+        authorization: Bearer test_token_xyz
+        content-type: application/grpc+proto
+        # x-trace-id: trace_disabled_123
+        // x-debug-flag: false
+        grpc-timeout: 2S
+        custom-header: value:with:multiple:colons
+        """
+
+        let parsed = HeaderBulkConverter.fromBulkText(rawBulkText)
+        XCTAssertEqual(parsed.count, 6)
+
+        // 1. 验证常规启用 Header
+        let auth = parsed.first { $0.key == "authorization" }
+        XCTAssertNotNil(auth)
+        XCTAssertEqual(auth?.value, "Bearer test_token_xyz")
+        XCTAssertTrue(auth?.isEnabled ?? false)
+
+        // 2. 验证注释禁用 Header (# 与 //)
+        let trace = parsed.first { $0.key == "x-trace-id" }
+        XCTAssertNotNil(trace)
+        XCTAssertEqual(trace?.value, "trace_disabled_123")
+        XCTAssertFalse(trace?.isEnabled ?? true)
+
+        let debug = parsed.first { $0.key == "x-debug-flag" }
+        XCTAssertNotNil(debug)
+        XCTAssertEqual(debug?.value, "false")
+        XCTAssertFalse(debug?.isEnabled ?? true)
+
+        // 3. 验证值中包含多个冒号的情况
+        let multiColons = parsed.first { $0.key == "custom-header" }
+        XCTAssertEqual(multiColons?.value, "value:with:multiple:colons")
+
+        // 4. 验证反向转换回纯文本
+        let backToText = HeaderBulkConverter.toBulkText(headers: parsed)
+        XCTAssertTrue(backToText.contains("authorization: Bearer test_token_xyz"))
+        XCTAssertTrue(backToText.contains("# x-trace-id: trace_disabled_123"))
+        XCTAssertTrue(backToText.contains("grpc-timeout: 2S"))
+    }
+
+    func testHeaderCatalog() {
+        // 1. 全量知识库条目检验
+        XCTAssertFalse(HeaderCatalog.sharedHeaders.isEmpty)
+        XCTAssertTrue(HeaderCatalog.sharedHeaders.contains { $0.name == "grpc-timeout" })
+        XCTAssertTrue(HeaderCatalog.sharedHeaders.contains { $0.name == "traceparent" })
+        XCTAssertTrue(HeaderCatalog.sharedHeaders.contains { $0.name == "authorization" })
+
+        // 2. 模糊查询匹配检验
+        let grpcMatches = HeaderCatalog.search(query: "grpc")
+        XCTAssertTrue(grpcMatches.contains { $0.name == "grpc-timeout" })
+        XCTAssertTrue(grpcMatches.contains { $0.name == "grpc-encoding" })
+
+        let traceMatches = HeaderCatalog.search(query: "trace")
+        XCTAssertTrue(traceMatches.contains { $0.name == "traceparent" })
+        XCTAssertTrue(traceMatches.contains { $0.name == "grpc-trace-bin" })
+
+        // 3. 推荐预置值完整性检验
+        let authDef = HeaderCatalog.sharedHeaders.first { $0.name == "authorization" }
+        XCTAssertTrue(authDef?.presetValues.contains("Bearer {{jwt_token}}") ?? false)
+
+        let timeoutDef = HeaderCatalog.sharedHeaders.first { $0.name == "grpc-timeout" }
+        XCTAssertTrue(timeoutDef?.presetValues.contains("1S") ?? false)
+    }
+
+    // MARK: - 17. Cmd+P 全局快速直达 (Quick Open) 请求与路径映射测试
+
+    @MainActor
+    func testQuickOpenBreadcrumbs() {
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("quick_open_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let storage = StorageManager(appSupportDir: tempDir)
+        let appState = AppState(storage: storage)
+
+        appState.createNewCollection(name: "Billing")
+        guard let col = appState.workspace.collections.first(where: { $0.name == "Billing" }) else {
+            XCTFail("Failed to create Billing collection")
+            return
+        }
+
+        appState.createFolder(in: col.id, name: "Invoices")
+        let folder = appState.workspace.collections.first(where: { $0.id == col.id })?.folders.first
+
+        appState.createNewRequest(in: col.id, folderId: folder?.id)
+
+        let breadcrumbs = appState.allRequestsWithBreadcrumbs()
+        XCTAssertFalse(breadcrumbs.isEmpty)
+
+        let found = breadcrumbs.first { $0.collectionName == "Billing" }
+        XCTAssertNotNil(found)
+        XCTAssertEqual(found?.folderName, "Invoices")
+        XCTAssertEqual(found?.request.name, "New gRPC Request")
+    }
 }
 
 // MARK: - Mock URLProtocol for Nacos HTTP 测试

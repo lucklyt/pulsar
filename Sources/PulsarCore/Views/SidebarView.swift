@@ -38,6 +38,22 @@ public struct SidebarView: View {
                     }
                     .buttonStyle(.plain)
                 }
+
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        appState.isQuickOpenPresented = true
+                    }
+                }) {
+                    Text("⌘P")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(Color.gray.opacity(0.15))
+                        .cornerRadius(3)
+                }
+                .buttonStyle(.plain)
+                .help("打开全局快速跳转面板 (⌘P)")
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
