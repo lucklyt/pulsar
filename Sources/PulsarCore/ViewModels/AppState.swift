@@ -31,9 +31,10 @@ public final class AppState: ObservableObject {
     @Published public var expandedCollectionIds: Set<UUID> = []
     @Published public var expandedFolderIds: Set<UUID> = []
 
-    private let storage = StorageManager.shared
+    private let storage: StorageManager
 
-    public init() {
+    public init(storage: StorageManager = .shared) {
+        self.storage = storage
         let loadedWorkspace = storage.loadWorkspace()
         self.workspace = loadedWorkspace
         self.history = storage.loadHistory()

@@ -396,4 +396,462 @@ final class PulsarTests: XCTestCase {
 
         XCTAssertEqual(Set(missingVars), Set(["unresolved_account_id", "not_found_var"]))
     }
+
+    // MARK: - 10. GRPCClientEngine 调用引擎全流程测试 (Unary, Streaming, Nacos)
+
+    func testGRPCClientEngineUnaryExecution() async {
+        let engine = GRPCClientEngine.shared
+        let env = EnvironmentModel(
+            name: "DevEnv",
+            variables: [
+                VariableItem(key: "host", value: "127.0.0.1"),
+                VariableItem(key: "port", value: "50051"),
+                VariableItem(key: "username", value: "Alice"),
+                VariableItem(key: "jwt", value: "secret-token-123", isSecret: true)
+            ]
+        )
+
+        let req = RequestModel(
+            name: "Greeter SayHello",
+            address: "{{host}}:{{port}}",
+            serviceName: "helloworld.Greeter",
+            methodName: "SayHello",
+            callType: .unary,
+            payload: "{\"name\": \"{{username}}\"}",
+            metadata: [MetadataHeader(key: "x-client", value: "PulsarTest")],
+            auth: AuthConfig(type: .bearer, bearerToken: "{{jwt}}")
+        )
+
+        let response = await engine.execute(
+            request: req,
+            activeEnvironment: env,
+            globalVariables: []
+        )
+
+        XCTAssertEqual(response.statusCode, 0)
+        XCTAssertEqual(response.statusName, "OK")
+        XCTAssertTrue(response.responsePayload.contains("Hello from gRPC server"))
+        XCTAssertTrue(response.responsePayload.contains("127.0.0.1:50051"))
+        XCTAssertNotNil(response.stats)
+        XCTAssertTrue((response.durationMs) > 0)
+        XCTAssertEqual(response.initialMetadata["content-type"], "application/grpc+proto")
+    }
+
+    func testGRPCClientEngineStreamingExecution() async {
+        let engine = GRPCClientEngine.shared
+
+        // 1. 服务端流 (Server Streaming)
+        let srvStreamReq = RequestModel(
+            name: "ListFeatures",
+            address: "127.0.0.1:50051",
+            serviceName: "routeguide.RouteGuide",
+            methodName: "ListFeatures",
+            callType: .serverStreaming,
+            payload: "{\"area\": \"box\"}"
+        )
+
+        var capturedServerEvents: [StreamEvent] = []
+        let srvResponse = await engine.execute(
+            request: srvStreamReq,
+            activeEnvironment: nil,
+            globalVariables: [],
+            onStreamEvent: { event in
+                capturedServerEvents.append(event)
+            }
+        )
+
+        XCTAssertEqual(srvResponse.statusCode, 0)
+        XCTAssertEqual(capturedServerEvents.count, 4) // 1 outbound + 3 inbound
+        XCTAssertEqual(capturedServerEvents.first?.direction, .outbound)
+        XCTAssertEqual(capturedServerEvents.filter { $0.direction == .inbound }.count, 3)
+        XCTAssertEqual(srvResponse.streamEvents.count, 4)
+
+        // 2. 客户端流 (Client Streaming)
+        let cliStreamReq = RequestModel(
+            name: "RecordRoute",
+            address: "127.0.0.1:50051",
+            serviceName: "routeguide.RouteGuide",
+            methodName: "RecordRoute",
+            callType: .clientStreaming,
+            payload: "{\"point\": 1}"
+        )
+
+        var capturedClientEvents: [StreamEvent] = []
+        let cliResponse = await engine.execute(
+            request: cliStreamReq,
+            activeEnvironment: nil,
+            globalVariables: [],
+            onStreamEvent: { event in
+                capturedClientEvents.append(event)
+            }
+        )
+
+        XCTAssertEqual(cliResponse.statusCode, 0)
+        XCTAssertEqual(capturedClientEvents.count, 3) // chunk + half-close + aggregate response
+        XCTAssertTrue(capturedClientEvents.contains { $0.isHalfClose })
+        XCTAssertTrue(capturedClientEvents.contains { $0.direction == .inbound })
+
+        // 3. 双向流 (Bidirectional Streaming)
+        let bidiReq = RequestModel(
+            name: "RouteChat",
+            address: "127.0.0.1:50051",
+            serviceName: "routeguide.RouteGuide",
+            methodName: "RouteChat",
+            callType: .bidiStreaming,
+            payload: "{\"message\": \"ping\"}"
+        )
+
+        var capturedBidiEvents: [StreamEvent] = []
+        let bidiResponse = await engine.execute(
+            request: bidiReq,
+            activeEnvironment: nil,
+            globalVariables: [],
+            onStreamEvent: { event in
+                capturedBidiEvents.append(event)
+            }
+        )
+
+        XCTAssertEqual(bidiResponse.statusCode, 0)
+        XCTAssertEqual(capturedBidiEvents.count, 2) // 1 outbound + 1 inbound echo
+        XCTAssertEqual(capturedBidiEvents[0].direction, .outbound)
+        XCTAssertEqual(capturedBidiEvents[1].direction, .inbound)
+    }
+
+    func testGRPCClientEngineNacosErrorHandling() async {
+        let engine = GRPCClientEngine.shared
+        let req = RequestModel(
+            name: "Unreachable Nacos Call",
+            address: "nacos://invalid_address_without_slash",
+            serviceName: "order.OrderService",
+            methodName: "GetOrder",
+            callType: .unary
+        )
+
+        let response = await engine.execute(
+            request: req,
+            activeEnvironment: nil,
+            globalVariables: []
+        )
+
+        XCTAssertEqual(response.statusCode, 14) // UNAVAILABLE
+        XCTAssertEqual(response.statusName, "UNAVAILABLE")
+        XCTAssertNotNil(response.errorMessage)
+        XCTAssertTrue(response.responsePayload.contains("Failed to resolve Nacos service"))
+    }
+
+    // MARK: - 11. NacosResolver 服务发现解析器测试
+
+    func testNacosDirectAddressPassthrough() async throws {
+        let directAddress = "127.0.0.1:50051"
+        let resolved = try await NacosResolver.shared.resolve(address: directAddress)
+        XCTAssertEqual(resolved, directAddress)
+    }
+
+    func testNacosInvalidAddressHandling() async {
+        do {
+            _ = try await NacosResolver.shared.resolve(address: "nacos://cluster_without_slash")
+            XCTFail("Should throw error when format is invalid")
+        } catch {
+            let nsErr = error as NSError
+            XCTAssertEqual(nsErr.domain, "NacosResolver")
+            XCTAssertEqual(nsErr.code, 400)
+        }
+    }
+
+    func testNacosMockHTTPResolution() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockNacosURLProtocol.self]
+        let mockSession = URLSession(configuration: config)
+
+        let mockJSON = """
+        {
+            "hosts": [
+                {
+                    "ip": "10.0.10.99",
+                    "port": 9099,
+                    "healthy": true,
+                    "enabled": true,
+                    "weight": 1.0
+                }
+            ]
+        }
+        """
+        MockNacosURLProtocol.mockData = mockJSON.data(using: .utf8)
+        MockNacosURLProtocol.mockStatusCode = 200
+
+        let resolver = NacosResolver(session: mockSession)
+        let resolved = try await resolver.resolve(address: "nacos://127.0.0.1:8848/public/payment-service?groupName=PAY_GROUP")
+
+        XCTAssertEqual(resolved, "10.0.10.99:9099")
+    }
+
+    // MARK: - 12. StorageManager 隔离持久化与向前兼容测试
+
+    func testStorageManagerWorkspacePersistence() throws {
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("storage_test_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let storage = StorageManager(appSupportDir: tempDir)
+
+        var col = CollectionModel(name: "Order Processing")
+        col.sharedMetadata = [MetadataHeader(key: "x-version", value: "v2")]
+        let folder = FolderModel(name: "Checkout", collectionId: col.id)
+        let req = RequestModel(name: "PayOrder", collectionId: col.id, folderId: folder.id)
+        col.folders = [folder]
+        col.requests = [req]
+
+        let env = EnvironmentModel(
+            name: "Production (Protected)",
+            isDefault: false,
+            colorHex: "#FF453A",
+            isProduction: true,
+            variables: [VariableItem(key: "env", value: "prod")]
+        )
+
+        let workspace = WorkspaceModel(
+            name: "My Workspace",
+            collections: [col],
+            environments: [env],
+            activeEnvironmentId: env.id,
+            globalVariables: [VariableItem(key: "platform", value: "macOS")]
+        )
+
+        try storage.saveWorkspace(workspace)
+
+        // 重新从磁盘读取加载
+        let reloaded = storage.loadWorkspace()
+        XCTAssertEqual(reloaded.collections.count, 1)
+        XCTAssertEqual(reloaded.collections.first?.name, "Order Processing")
+        XCTAssertEqual(reloaded.collections.first?.sharedMetadata.first?.key, "x-version")
+        XCTAssertEqual(reloaded.environments.count, 1)
+        XCTAssertEqual(reloaded.environments.first?.colorHex, "#FF453A")
+        XCTAssertTrue(reloaded.environments.first?.isProduction ?? false)
+        XCTAssertEqual(reloaded.globalVariables.first?.key, "platform")
+    }
+
+    func testStorageManagerHistoryPersistence() throws {
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("storage_hist_test_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let storage = StorageManager(appSupportDir: tempDir)
+        let response = RPCResponse(
+            requestId: UUID(),
+            statusCode: 0,
+            statusName: "OK",
+            durationMs: 12.5,
+            responseSize: 1024,
+            responsePayload: "{\"status\": \"persisted\"}"
+        )
+
+        storage.saveHistory([response])
+        let reloaded = storage.loadHistory()
+
+        XCTAssertEqual(reloaded.count, 1)
+        XCTAssertEqual(reloaded.first?.statusCode, 0)
+        XCTAssertEqual(reloaded.first?.responsePayload, "{\"status\": \"persisted\"}")
+        XCTAssertEqual(reloaded.first?.durationMs, 12.5)
+    }
+
+    func testStorageManagerBackwardCompatibility() throws {
+        // 验证旧版本缺少 colorHex, isProduction, sharedMetadata, auth 等新字段时的向前兼容性
+        let legacyEnvironmentJSON = """
+        {
+            "id": "11111111-2222-3333-4444-555555555555",
+            "name": "Production Cluster",
+            "isDefault": false,
+            "variables": []
+        }
+        """
+
+        let envDecoder = JSONDecoder()
+        let env = try envDecoder.decode(EnvironmentModel.self, from: legacyEnvironmentJSON.data(using: .utf8)!)
+
+        XCTAssertEqual(env.name, "Production Cluster")
+        // 应自动智能推断为生产环境并赋予专属高警示红色
+        XCTAssertTrue(env.isProduction)
+        XCTAssertEqual(env.colorHex, "#FF453A")
+
+        let legacyFolderJSON = """
+        {
+            "id": "22222222-3333-4444-5555-666666666666",
+            "name": "Legacy Folder",
+            "collectionId": "11111111-2222-3333-4444-555555555555",
+            "requestIds": []
+        }
+        """
+
+        let folder = try JSONDecoder().decode(FolderModel.self, from: legacyFolderJSON.data(using: .utf8)!)
+        XCTAssertEqual(folder.name, "Legacy Folder")
+        XCTAssertEqual(folder.auth.type, .inherit)
+        XCTAssertTrue(folder.sharedMetadata.isEmpty)
+    }
+
+    // MARK: - 13. AppState 状态中枢业务与生命周期操作测试
+
+    @MainActor
+    func testAppStateTabAndCRUDLifecycle() {
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("appstate_test_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let storage = StorageManager(appSupportDir: tempDir)
+        let appState = AppState(storage: storage)
+
+        // 1. 创建集合与文件夹
+        appState.createNewCollection(name: "Commerce")
+        guard let col = appState.workspace.collections.first(where: { $0.name == "Commerce" }) else {
+            XCTFail("Failed to create collection")
+            return
+        }
+
+        appState.createFolder(in: col.id, name: "Inventory")
+        let folder = appState.workspace.collections.first(where: { $0.id == col.id })?.folders.first
+        XCTAssertNotNil(folder)
+
+        // 2. 创建请求
+        appState.createNewRequest(in: col.id, folderId: folder?.id)
+        let createdReq = appState.workspace.collections.first(where: { $0.id == col.id })?.requests.first
+        XCTAssertNotNil(createdReq)
+        XCTAssertEqual(appState.openTabIds.last, createdReq?.id)
+        XCTAssertEqual(appState.activeTabId, createdReq?.id)
+
+        // 3. 复制请求 (Duplicate)
+        if let reqId = createdReq?.id {
+            appState.duplicateRequest(id: reqId)
+            let colAfterDup = appState.workspace.collections.first(where: { $0.id == col.id })
+            XCTAssertEqual(colAfterDup?.requests.count, 2)
+            XCTAssertTrue(colAfterDup?.requests.last?.name.contains("(Copy)") ?? false)
+            XCTAssertEqual(appState.activeTabId, colAfterDup?.requests.last?.id)
+        }
+
+        // 4. Dirty 状态追踪与保存
+        if let activeId = appState.activeTabId {
+            appState.markDirty(id: activeId)
+            XCTAssertTrue(appState.dirtyTabIds.contains(activeId))
+
+            appState.saveActiveRequest()
+            XCTAssertFalse(appState.dirtyTabIds.contains(activeId))
+        }
+
+        // 5. 搜索过滤 (Search Query Filter)
+        appState.searchQuery = "Inventory"
+        let filtered1 = appState.filteredRequests(in: appState.workspace.collections.first(where: { $0.id == col.id })!)
+        // 请求名称为 "New gRPC Request"，不包含 "Inventory"
+        XCTAssertTrue(filtered1.isEmpty)
+
+        appState.searchQuery = "New gRPC"
+        let filtered2 = appState.filteredRequests(in: appState.workspace.collections.first(where: { $0.id == col.id })!)
+        XCTAssertFalse(filtered2.isEmpty)
+        appState.searchQuery = ""
+
+        // 6. 标签页关闭与删除
+        if let dupReq = appState.workspace.collections.first(where: { $0.id == col.id })?.requests.last {
+            appState.closeTab(id: dupReq.id)
+            XCTAssertFalse(appState.openTabIds.contains(dupReq.id))
+            XCTAssertNotEqual(appState.activeTabId, dupReq.id)
+
+            appState.deleteRequest(id: dupReq.id)
+            let remainingCount = appState.workspace.collections.first(where: { $0.id == col.id })?.requests.count
+            XCTAssertEqual(remainingCount, 1)
+        }
+
+        // 7. 级联删除文件夹
+        if let f = folder {
+            appState.deleteFolder(id: f.id)
+            let colAfterFolderDelete = appState.workspace.collections.first(where: { $0.id == col.id })
+            XCTAssertTrue(colAfterFolderDelete?.folders.isEmpty ?? false)
+            XCTAssertTrue(colAfterFolderDelete?.requests.isEmpty ?? false)
+        }
+    }
+
+    // MARK: - 14. AuthConfig 与 TLSConfig 编解码及安全模式测试
+
+    func testAuthConfigAndTLSConfigSerialization() throws {
+        // 测试所有 5 种 Auth 模式的序列化与反序列化
+        let authList: [AuthConfig] = [
+            AuthConfig(type: .inherit),
+            AuthConfig(type: .none),
+            AuthConfig(type: .bearer, bearerToken: "jwt_abc_123"),
+            AuthConfig(type: .apiKey, apiKeyName: "X-Auth-Key", apiKeyValue: "secret-key"),
+            AuthConfig(type: .basic, username: "admin", password: "pwd")
+        ]
+
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+
+        for auth in authList {
+            let data = try encoder.encode(auth)
+            let decoded = try decoder.decode(AuthConfig.self, from: data)
+            XCTAssertEqual(auth, decoded)
+        }
+
+        // 测试所有 5 种 TLS 模式的序列化与反序列化
+        let tlsList: [TLSConfig] = [
+            TLSConfig(mode: .inherit),
+            TLSConfig(mode: .plaintext),
+            TLSConfig(mode: .tlsSystem),
+            TLSConfig(mode: .tlsCustomCA, rootCAPath: "/etc/ssl/ca.crt", insecureSkipVerify: true),
+            TLSConfig(mode: .mtls, clientCertPath: "/etc/ssl/client.crt", clientKeyPath: "/etc/ssl/client.key")
+        ]
+
+        for tls in tlsList {
+            let data = try encoder.encode(tls)
+            let decoded = try decoder.decode(TLSConfig.self, from: data)
+            XCTAssertEqual(tls, decoded)
+        }
+    }
+
+    // MARK: - 15. EnvironmentModel 变量提取与生产保护属性测试
+
+    func testActiveVariableDictionary() {
+        let env = EnvironmentModel(
+            name: "Staging",
+            variables: [
+                VariableItem(key: "host", value: "192.168.1.1", isEnabled: true),
+                VariableItem(key: "disabled_var", value: "xyz", isEnabled: false),
+                VariableItem(key: "  trimmed_key  ", value: "value123", isEnabled: true),
+                VariableItem(key: "", value: "empty_key", isEnabled: true)
+            ]
+        )
+
+        let dict = env.activeVariableDictionary
+        XCTAssertEqual(dict["host"], "192.168.1.1")
+        XCTAssertEqual(dict["trimmed_key"], "value123")
+        XCTAssertNil(dict["disabled_var"])
+        XCTAssertNil(dict[""])
+    }
 }
+
+// MARK: - Mock URLProtocol for Nacos HTTP 测试
+
+final class MockNacosURLProtocol: URLProtocol {
+    static var mockData: Data?
+    static var mockStatusCode: Int = 200
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        return true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        return request
+    }
+
+    override func startLoading() {
+        if let data = MockNacosURLProtocol.mockData {
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(string: "http://127.0.0.1:8848")!,
+                statusCode: MockNacosURLProtocol.mockStatusCode,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+        }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+

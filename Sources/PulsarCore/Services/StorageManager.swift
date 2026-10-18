@@ -7,10 +7,14 @@ public final class StorageManager {
     private let fileManager = FileManager.default
     private let appSupportDir: URL
 
-    public init() {
-        let baseDir = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        self.appSupportDir = baseDir.appendingPathComponent("Pulsar", isDirectory: true)
-        try? fileManager.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
+    public init(appSupportDir: URL? = nil) {
+        if let dir = appSupportDir {
+            self.appSupportDir = dir
+        } else {
+            let baseDir = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            self.appSupportDir = baseDir.appendingPathComponent("Pulsar", isDirectory: true)
+        }
+        try? fileManager.createDirectory(at: self.appSupportDir, withIntermediateDirectories: true)
     }
 
     private var workspaceFile: URL {

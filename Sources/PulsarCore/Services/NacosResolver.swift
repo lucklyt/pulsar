@@ -18,11 +18,15 @@ public final class NacosResolver {
     public static let shared = NacosResolver()
     private let urlSession: URLSession
 
-    public init(session: URLSession = .shared) {
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 5.0
-        config.timeoutIntervalForResource = 10.0
-        self.urlSession = URLSession(configuration: config)
+    public init(session: URLSession? = nil) {
+        if let customSession = session {
+            self.urlSession = customSession
+        } else {
+            let config = URLSessionConfiguration.ephemeral
+            config.timeoutIntervalForRequest = 5.0
+            config.timeoutIntervalForResource = 10.0
+            self.urlSession = URLSession(configuration: config)
+        }
     }
 
     /// 解析形如 nacos://host1:8848,host2:8848/namespace/serviceName?username=xxx&password=yyy
