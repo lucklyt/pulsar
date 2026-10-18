@@ -136,6 +136,23 @@ public struct MainView: View {
                 .keyboardShortcut("p", modifiers: .command)
                 .help("全局极速跳转到请求、服务或方法 (⌘P)")
 
+                // 集合批量自动化运行器 (Collection Runner ⌘⇧R)
+                Button(action: {
+                    if let firstCol = appState.workspace.collections.first {
+                        appState.activeRunnerConfig = CollectionRunConfig(
+                            collectionId: firstCol.id,
+                            folderId: nil,
+                            collectionName: firstCol.name,
+                            folderName: nil,
+                            environmentId: appState.workspace.activeEnvironmentId
+                        )
+                    }
+                }) {
+                    Image(systemName: "play.circle")
+                }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .help("打开集合批量自动化运行器 (Collection Runner ⌘⇧R)")
+
                 // Proto 仓库与 Import Path 配置按键 (⌘⇧P)
                 Button(action: {
                     appState.isProtoExplorerPresented = true
@@ -169,6 +186,19 @@ public struct MainView: View {
         .sheet(isPresented: $appState.isProtoExplorerPresented) {
             ProtoExplorerView(appState: appState)
                 .frame(minWidth: 880, minHeight: 560)
+        }
+        .sheet(item: Binding<CollectionRunConfig?>(
+            get: { appState.activeRunnerConfig },
+            set: { appState.activeRunnerConfig = $0 }
+        )) { config in
+            CollectionRunnerView(
+                appState: appState,
+                isPresented: Binding(
+                    get: { appState.activeRunnerConfig != nil },
+                    set: { if !$0 { appState.activeRunnerConfig = nil } }
+                ),
+                config: config
+            )
         }
         .overlay {
             if appState.isQuickOpenPresented {

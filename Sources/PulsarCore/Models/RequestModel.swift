@@ -196,6 +196,7 @@ public struct RequestModel: Identifiable, Codable, Equatable, Hashable {
     public var updatedAt: Date
     public var assertions: [AssertionRule]
     public var responseVars: [ResponseVarRule]
+    public var docs: String
 
     public init(
         id: UUID = UUID(),
@@ -215,7 +216,8 @@ public struct RequestModel: Identifiable, Codable, Equatable, Hashable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         assertions: [AssertionRule] = [],
-        responseVars: [ResponseVarRule] = []
+        responseVars: [ResponseVarRule] = [],
+        docs: String = ""
     ) {
         self.id = id
         self.name = name
@@ -235,12 +237,13 @@ public struct RequestModel: Identifiable, Codable, Equatable, Hashable {
         self.updatedAt = updatedAt
         self.assertions = assertions
         self.responseVars = responseVars
+        self.docs = docs
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, collectionId, folderId, address, serviceName, methodName, callType
         case payload, metadata, auth, tls, discovery, timeoutSeconds, createdAt, updatedAt
-        case assertions, responseVars
+        case assertions, responseVars, docs
     }
 
     public init(from decoder: Decoder) throws {
@@ -263,5 +266,6 @@ public struct RequestModel: Identifiable, Codable, Equatable, Hashable {
         self.updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
         self.assertions = try container.decodeIfPresent([AssertionRule].self, forKey: .assertions) ?? []
         self.responseVars = try container.decodeIfPresent([ResponseVarRule].self, forKey: .responseVars) ?? []
+        self.docs = try container.decodeIfPresent(String.self, forKey: .docs) ?? ""
     }
 }

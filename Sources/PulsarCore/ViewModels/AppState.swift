@@ -27,6 +27,7 @@ public final class AppState: ObservableObject {
     @Published public var isProtoExplorerPresented: Bool = false
     @Published public var editingCollectionTarget: CollectionSettingsTarget? = nil
     @Published public var editingFolderTarget: FolderSettingsTarget? = nil
+    @Published public var activeRunnerConfig: CollectionRunConfig? = nil
 
     // 展开/折叠状态追踪 (Collection 与 Folder)
     @Published public var expandedCollectionIds: Set<UUID> = []

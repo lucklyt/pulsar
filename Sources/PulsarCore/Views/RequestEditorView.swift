@@ -9,6 +9,7 @@ public struct RequestEditorView: View {
     @State private var isBulkHeaderEdit: Bool = false
     @State private var bulkHeaderText: String = ""
     @State private var isInheritedHeadersExpanded: Bool = true
+    @State private var isDocsPreviewMode: Bool = false
 
     enum EditorTab: String, CaseIterable, Identifiable {
         case body = "请求体"
@@ -16,6 +17,7 @@ public struct RequestEditorView: View {
         case auth = "认证鉴权"
         case assertions = "断言测试"
         case vars = "响应变量"
+        case docs = "文档"
         case settings = "连接配置"
         case schema = "Proto 文档"
 
@@ -49,6 +51,9 @@ public struct RequestEditorView: View {
                 let varsCount = request.responseVars.filter { $0.isEnabled }.count
                 tabButton(.vars, badge: varsCount > 0 ? "\(varsCount)" : nil)
 
+                let docLength = request.docs.trimmingCharacters(in: .whitespacesAndNewlines).count
+                tabButton(.docs, badge: docLength > 0 ? "Doc" : nil)
+
                 tabButton(.settings, badge: nil)
                 tabButton(.schema, badge: request.serviceName.isEmpty ? nil : "Proto")
 
@@ -72,6 +77,8 @@ public struct RequestEditorView: View {
                     assertionsEditorView
                 case .vars:
                     varsEditorView
+                case .docs:
+                    docsEditorView
                 case .settings:
                     settingsEditorView
                 case .schema:
@@ -1369,6 +1376,151 @@ public struct RequestEditorView: View {
                     Spacer()
                 }
                 .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    // MARK: - Markdown 文档选项卡 (Bruno Docs)
+
+    private var docsEditorView: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "doc.text.fill")
+                        .foregroundColor(.accentColor)
+                    Text("接口 Markdown 文档")
+                        .font(.system(size: 13, weight: .bold))
+                }
+
+                Spacer()
+
+                // 插入标准模板按钮
+                Menu {
+                    Button("插入标准接口说明模板") {
+                        let template = """
+                        # \(request.name.isEmpty ? "接口说明" : request.name)
+
+                        ### 概述
+                        用于调用 `\(request.serviceName.isEmpty ? "Service" : request.serviceName)/\(request.methodName.isEmpty ? "Method" : request.methodName)` 服务。
+
+                        ### 参数说明
+                        - `id`: 业务唯一标识
+                        - `filter`: 查询过滤条件
+
+                        ### 响应说明
+                        - 返回 `200 OK` 包含核心实体对象。
+                        - 错误场景返回响应错误码与提示。
+
+                        ### 变更历史
+                        - \(DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .none)): 初始版本
+                        """
+                        if request.docs.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            request.docs = template
+                        } else {
+                            request.docs += "\n\n" + template
+                        }
+                        appState.markDirty(id: request.id)
+                    }
+
+                    Button("插入请求载荷示例") {
+                        let codeBlock = """
+                        ### 请求载荷示例
+                        ```json
+                        \(request.payload)
+                        ```
+                        """
+                        if request.docs.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            request.docs = codeBlock
+                        } else {
+                            request.docs += "\n\n" + codeBlock
+                        }
+                        appState.markDirty(id: request.id)
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "wand.and.stars")
+                        Text("插入模板")
+                        Image(systemName: "chevron.down").font(.system(size: 8))
+                    }
+                    .font(.system(size: 11))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color(NSColor.controlBackgroundColor))
+                    .cornerRadius(5)
+                }
+                .buttonStyle(.plain)
+
+                // 模式切换：编辑 / 预览
+                Picker("模式", selection: $isDocsPreviewMode) {
+                    Text("编辑 (Edit)").tag(false)
+                    Text("预览 (Preview)").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 160)
+            }
+
+            if isDocsPreviewMode {
+                // 预览模式
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if request.docs.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            VStack(spacing: 8) {
+                                Image(systemName: "text.book.closed")
+                                    .font(.system(size: 28))
+                                    .foregroundColor(.secondary)
+                                Text("暂无文档内容，点击上方【编辑】开始撰写")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 200)
+                        } else {
+                            // 原生渲染 Markdown 格式文本
+                            Text(LocalizedStringKey(request.docs))
+                                .font(.system(size: 13))
+                                .lineSpacing(4)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .background(Color(NSColor.textBackgroundColor))
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.gray.opacity(0.18), lineWidth: 1)
+                )
+            } else {
+                // 编辑模式
+                VStack(alignment: .leading, spacing: 4) {
+                    TextEditor(text: Binding(
+                        get: { request.docs },
+                        set: {
+                            request.docs = $0
+                            appState.markDirty(id: request.id)
+                        }
+                    ))
+                    .font(.system(size: 12, design: .monospaced))
+                    .lineSpacing(3)
+                    .padding(8)
+                    .background(Color(NSColor.textBackgroundColor))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.gray.opacity(0.18), lineWidth: 1)
+                    )
+
+                    HStack {
+                        Text("支持标准 GitHub Flavored Markdown 语法 (# 标题, - 列表, **粗体**, `代码块`)")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text("\(request.docs.count) 字")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
         }
     }

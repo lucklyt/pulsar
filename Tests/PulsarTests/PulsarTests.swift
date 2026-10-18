@@ -1005,6 +1005,205 @@ final class PulsarTests: XCTestCase {
         XCTAssertEqual(extracted["gateway_trace"], "req_uuid_001")
         XCTAssertNil(extracted["disabled_var"])
     }
+
+    // MARK: - 20. Request Markdown 文档持久化与向后兼容测试
+
+    func testRequestDocsFieldPersistenceAndCompatibility() throws {
+        let reqWithDocs = RequestModel(
+            name: "GetUserProfile",
+            serviceName: "user.UserService",
+            methodName: "GetProfile",
+            docs: "# 获取用户信息\n返回用户的姓名与权限列表。"
+        )
+
+        let encoder = JSONEncoder()
+        let encodedData = try encoder.encode(reqWithDocs)
+
+        let decoder = JSONDecoder()
+        let decodedReq = try decoder.decode(RequestModel.self, from: encodedData)
+        XCTAssertEqual(decodedReq.docs, "# 获取用户信息\n返回用户的姓名与权限列表。")
+
+        // 模拟没有 docs 字段的旧版本 JSON
+        let legacyJSON = """
+        {
+            "id": "11111111-2222-3333-4444-555555555555",
+            "name": "Legacy Request",
+            "address": "127.0.0.1:50051",
+            "serviceName": "legacy.Service",
+            "methodName": "DoLegacy",
+            "callType": "UNARY",
+            "payload": "{}"
+        }
+        """.data(using: .utf8)!
+
+        let legacyDecoded = try decoder.decode(RequestModel.self, from: legacyJSON)
+        XCTAssertEqual(legacyDecoded.name, "Legacy Request")
+        XCTAssertEqual(legacyDecoded.docs, "", "旧版本 JSON 没有 docs 字段时应平滑回退为空字符串")
+    }
+
+    // MARK: - 21. CodeSnippetEngine 客户端代码生成器测试 (Go, Python, TypeScript, Swift, cURL)
+
+    func testCodeSnippetEngineGeneration() {
+        let engine = CodeSnippetEngine.shared
+        let req = RequestModel(
+            name: "OrderCreate",
+            serviceName: "order.OrderService",
+            methodName: "CreateOrder",
+            callType: .unary,
+            payload: "{\"userId\": 1001, \"item\": \"MacBook\"}",
+            metadata: [
+                MetadataHeader(key: "x-tenant-id", value: "tenant_99"),
+                MetadataHeader(key: "x-disabled-h", value: "none", isEnabled: false)
+            ],
+            auth: AuthConfig(type: .bearer, bearerToken: "jwt_token_xyz")
+        )
+
+        // 1. Go
+        let goCode = engine.generateSnippet(
+            language: .golang,
+            request: req,
+            effectiveAddress: "127.0.0.1:50051",
+            effectivePayload: req.payload,
+            effectiveHeaders: req.metadata,
+            effectiveAuth: req.auth,
+            effectiveTLS: TLSConfig(mode: .plaintext)
+        )
+        XCTAssertTrue(goCode.contains("grpc.NewClient"))
+        XCTAssertTrue(goCode.contains("/order.OrderService/CreateOrder"))
+        XCTAssertTrue(goCode.contains("\"x-tenant-id\": \"tenant_99\""))
+        XCTAssertTrue(goCode.contains("\"authorization\": \"Bearer jwt_token_xyz\""))
+        XCTAssertFalse(goCode.contains("x-disabled-h"))
+
+        // 2. Python
+        let pyCode = engine.generateSnippet(
+            language: .python,
+            request: req,
+            effectiveAddress: "127.0.0.1:50051",
+            effectivePayload: req.payload,
+            effectiveHeaders: req.metadata,
+            effectiveAuth: req.auth,
+            effectiveTLS: TLSConfig(mode: .plaintext)
+        )
+        XCTAssertTrue(pyCode.contains("grpc.insecure_channel"))
+        XCTAssertTrue(pyCode.contains("/order.OrderService/CreateOrder"))
+        XCTAssertTrue(pyCode.contains("(\"x-tenant-id\", \"tenant_99\")"))
+        XCTAssertTrue(pyCode.contains("(\"authorization\", \"Bearer jwt_token_xyz\")"))
+
+        // 3. TypeScript
+        let tsCode = engine.generateSnippet(
+            language: .typescript,
+            request: req,
+            effectiveAddress: "127.0.0.1:50051",
+            effectivePayload: req.payload,
+            effectiveHeaders: req.metadata,
+            effectiveAuth: req.auth,
+            effectiveTLS: TLSConfig(mode: .plaintext)
+        )
+        XCTAssertTrue(tsCode.contains("@grpc/grpc-js"))
+        XCTAssertTrue(tsCode.contains("metadata.add('authorization', 'Bearer jwt_token_xyz')"))
+
+        // 4. Swift
+        let swiftCode = engine.generateSnippet(
+            language: .swift,
+            request: req,
+            effectiveAddress: "127.0.0.1:50051",
+            effectivePayload: req.payload,
+            effectiveHeaders: req.metadata,
+            effectiveAuth: req.auth,
+            effectiveTLS: TLSConfig(mode: .plaintext)
+        )
+        XCTAssertTrue(swiftCode.contains("sendGRPCRequest() async throws"))
+        XCTAssertTrue(swiftCode.contains("/order.OrderService/CreateOrder"))
+
+        // 5. cURL
+        let curlCode = engine.generateSnippet(
+            language: .curl,
+            request: req,
+            effectiveAddress: "127.0.0.1:50051",
+            effectivePayload: req.payload,
+            effectiveHeaders: req.metadata,
+            effectiveAuth: req.auth,
+            effectiveTLS: TLSConfig(mode: .plaintext)
+        )
+        XCTAssertTrue(curlCode.contains("curl -X POST"))
+        XCTAssertTrue(curlCode.contains("http://127.0.0.1:50051/order.OrderService/CreateOrder"))
+        XCTAssertTrue(curlCode.contains("Authorization: Bearer jwt_token_xyz"))
+    }
+
+    // MARK: - 22. CollectionRunnerEngine 批量自动化测试执行与 Markdown 报告测试
+
+    func testCollectionRunnerEngineExecution() async {
+        let runner = CollectionRunnerEngine.shared
+
+        // 请求 1: 登录并提取 Token
+        var reqLogin = RequestModel(
+            name: "1. Login",
+            address: "127.0.0.1:50051",
+            serviceName: "auth.AuthService",
+            methodName: "Login",
+            callType: .unary,
+            payload: "{\"username\": \"admin\"}"
+        )
+        reqLogin.assertions = [
+            AssertionRule(expression: "res.status", op: .equals, expectedValue: "0")
+        ]
+        reqLogin.responseVars = [
+            ResponseVarRule(targetVariable: "session_token", sourcePath: "res.body.token")
+        ]
+
+        // 请求 2: 使用提取到的 {{session_token}} 获取账户信息
+        var reqProfile = RequestModel(
+            name: "2. GetProfile",
+            address: "127.0.0.1:50051",
+            serviceName: "user.UserService",
+            methodName: "GetProfile",
+            callType: .unary,
+            payload: "{}",
+            auth: AuthConfig(type: .bearer, bearerToken: "{{session_token}}")
+        )
+        reqProfile.assertions = [
+            AssertionRule(expression: "res.status", op: .equals, expectedValue: "0"),
+            AssertionRule(expression: "res.responseTime", op: .lessThan, expectedValue: "10000")
+        ]
+
+        let config = CollectionRunConfig(
+            collectionId: UUID(),
+            collectionName: "UserWorkflowSuite",
+            delayMs: 0,
+            stopOnFirstFailure: false
+        )
+
+        let summary = await runner.run(
+            config: config,
+            requests: [reqLogin, reqProfile],
+            baseEnvironment: EnvironmentModel(name: "TestEnv"),
+            globalVariables: [],
+            resolveEffectiveConfig: { req in
+                AppState.EffectiveRequestConfig(
+                    effectiveRequest: req,
+                    effectiveAuth: req.auth,
+                    authSource: "直接配置",
+                    inheritedMetadata: [],
+                    effectiveSecurity: TLSConfig(mode: .plaintext),
+                    securitySource: "默认",
+                    effectiveTimeout: 15.0
+                )
+            }
+        )
+
+        XCTAssertEqual(summary.totalRequests, 2)
+        XCTAssertEqual(summary.results.count, 2)
+        XCTAssertTrue(summary.totalDurationMs >= 0)
+        XCTAssertEqual(summary.totalAssertions, 3)
+
+        // 验证 Markdown 测试报告生成
+        let mdReport = summary.exportMarkdownReport()
+        XCTAssertTrue(mdReport.contains("# Pulsar 自动化测试执行报告"))
+        XCTAssertTrue(mdReport.contains("UserWorkflowSuite"))
+        XCTAssertTrue(mdReport.contains("用例明细列表"))
+        XCTAssertTrue(mdReport.contains("1. Login"))
+        XCTAssertTrue(mdReport.contains("2. GetProfile"))
+    }
 }
 
 // MARK: - Mock URLProtocol for Nacos HTTP 测试

@@ -124,6 +124,15 @@ public struct SidebarView: View {
                                         onOpenSettings: {
                                             appState.editingFolderTarget = FolderSettingsTarget(collectionId: collection.id, folderId: folder.id)
                                         },
+                                        onRunFolder: {
+                                            appState.activeRunnerConfig = CollectionRunConfig(
+                                                collectionId: collection.id,
+                                                folderId: folder.id,
+                                                collectionName: collection.name,
+                                                folderName: folder.name,
+                                                environmentId: appState.workspace.activeEnvironmentId
+                                            )
+                                        },
                                         onDelete: {
                                             appState.deleteFolder(id: folder.id)
                                         }
@@ -179,6 +188,15 @@ public struct SidebarView: View {
                                     if panel.runModal() == .OK, let url = panel.url {
                                         appState.exportCollectionToDirectory(collectionId: collection.id, targetDir: url)
                                     }
+                                },
+                                onRunCollection: {
+                                    appState.activeRunnerConfig = CollectionRunConfig(
+                                        collectionId: collection.id,
+                                        folderId: nil,
+                                        collectionName: collection.name,
+                                        folderName: nil,
+                                        environmentId: appState.workspace.activeEnvironmentId
+                                    )
                                 },
                                 onDelete: {
                                     appState.deleteCollection(id: collection.id)
@@ -365,6 +383,7 @@ struct CollectionRowHeaderView: View {
     let onRename: () -> Void
     let onOpenSettings: () -> Void
     let onExportToDirectory: () -> Void
+    let onRunCollection: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -386,6 +405,10 @@ struct CollectionRowHeaderView: View {
                 }
                 Button(action: onNewFolder) {
                     Label("新建文件夹", systemImage: "folder.badge.plus")
+                }
+                Divider()
+                Button(action: onRunCollection) {
+                    Label("运行集合 (Run Collection...)", systemImage: "play.circle")
                 }
                 Divider()
                 Button(action: onOpenSettings) {
@@ -423,6 +446,10 @@ struct CollectionRowHeaderView: View {
                 Label("新建文件夹", systemImage: "folder.badge.plus")
             }
             Divider()
+            Button(action: onRunCollection) {
+                Label("运行集合 (Run Collection...)", systemImage: "play.circle")
+            }
+            Divider()
             Button(action: onOpenSettings) {
                 Label("集合设置 (Settings)", systemImage: "gearshape")
             }
@@ -446,6 +473,7 @@ struct FolderRowHeaderView: View {
     let onNewRequest: () -> Void
     let onRename: () -> Void
     let onOpenSettings: () -> Void
+    let onRunFolder: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -478,6 +506,10 @@ struct FolderRowHeaderView: View {
         .contextMenu {
             Button(action: onNewRequest) {
                 Label("在此文件夹下新建请求", systemImage: "doc.badge.plus")
+            }
+            Divider()
+            Button(action: onRunFolder) {
+                Label("运行此文件夹 (Run Folder...)", systemImage: "play.circle")
             }
             Divider()
             Button(action: onOpenSettings) {

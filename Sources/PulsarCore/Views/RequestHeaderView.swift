@@ -6,10 +6,11 @@ public struct RequestHeaderView: View {
     @ObservedObject var appState: AppState
 
     @State private var isProtoMethodMenuPresented: Bool = false
+    @State private var isCodeSnippetPresented: Bool = false
 
     public var body: some View {
         VStack(spacing: 8) {
-            // 第一行：请求标题与快捷操作 (Save, Copy CLI)
+            // 第一行：请求标题与快捷操作 (Save, Code Snippets)
             HStack(spacing: 8) {
                 HStack(spacing: 6) {
                     Image(systemName: "pencil")
@@ -28,6 +29,29 @@ public struct RequestHeaderView: View {
                 }
 
                 Spacer()
+
+                // Bruno 风格代码片段生成按钮 (Code Snippets)
+                Button(action: {
+                    isCodeSnippetPresented = true
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "curlybraces")
+                            .font(.system(size: 11))
+                        Text("代码生成")
+                            .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color(NSColor.controlBackgroundColor))
+                    .cornerRadius(5)
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help("生成多语言客户端调用代码 (Go, Python, TypeScript, Swift, cURL)")
+                .sheet(isPresented: $isCodeSnippetPresented) {
+                    CodeSnippetView(appState: appState, isPresented: $isCodeSnippetPresented, request: request)
+                }
 
                 // Bruno 风格 Save 按钮 (带未保存高亮与 ⌘S 快捷键)
                 Button(action: {
