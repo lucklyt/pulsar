@@ -2,9 +2,11 @@ import SwiftUI
 
 /// 主界面：Bruno 风格 3 栏式原生 macOS 布局 (Sidebar + TabBar + 动态分栏 Request/Response + 快捷环境悬浮窗)
 public struct MainView: View {
-    @StateObject private var appState = AppState()
+    @ObservedObject public var appState: AppState
 
-    public init() {}
+    public init(appState: AppState = AppState()) {
+        self.appState = appState
+    }
 
     public var body: some View {
         NavigationSplitView {
