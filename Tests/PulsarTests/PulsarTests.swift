@@ -920,6 +920,91 @@ final class PulsarTests: XCTestCase {
         XCTAssertEqual(found?.folderName, "Invoices")
         XCTAssertEqual(found?.request.name, "New gRPC Request")
     }
+
+    // MARK: - 18. Bruno 风格声明式免代码断言引擎 (Declarative Assertions) 测试
+
+    func testAssertionEngineStatusAndJSONPath() {
+        let jsonPayload = """
+        {
+            "code": 200,
+            "token": "jwt_token_secret_xyz",
+            "user": {
+                "id": 10086,
+                "name": "Alice Cooper",
+                "roles": ["admin", "developer"]
+            },
+            "active": true
+        }
+        """
+
+        let response = RPCResponse(
+            requestId: UUID(),
+            statusCode: 0,
+            statusName: "OK",
+            durationMs: 42.5,
+            responseSize: jsonPayload.utf8.count,
+            responsePayload: jsonPayload,
+            initialMetadata: ["x-trace-id": "trace_999", "content-type": "application/grpc+proto"]
+        )
+
+        let rules: [AssertionRule] = [
+            AssertionRule(expression: "res.status", op: .equals, expectedValue: "0"),
+            AssertionRule(expression: "res.statusName", op: .equals, expectedValue: "OK"),
+            AssertionRule(expression: "res.responseTime", op: .lessThan, expectedValue: "200"),
+            AssertionRule(expression: "res.body.code", op: .equals, expectedValue: "200"),
+            AssertionRule(expression: "res.body.token", op: .isDefined),
+            AssertionRule(expression: "res.body.user.id", op: .greaterThan, expectedValue: "1000"),
+            AssertionRule(expression: "res.body.user.name", op: .contains, expectedValue: "Alice"),
+            AssertionRule(expression: "res.body.user.roles.length", op: .equals, expectedValue: "2"),
+            AssertionRule(expression: "res.body.user.roles.0", op: .equals, expectedValue: "admin"),
+            AssertionRule(expression: "res.body.non_existent", op: .isNullOrEmpty),
+            AssertionRule(expression: "res.headers.x-trace-id", op: .equals, expectedValue: "trace_999")
+        ]
+
+        let results = AssertionEngine.shared.evaluateAssertions(rules: rules, response: response)
+
+        XCTAssertEqual(results.count, 11)
+        for r in results {
+            XCTAssertTrue(r.passed, "断言失败: \(r.expression) \(r.op.rawValue) \(r.expectedValue)，实际为: \(r.actualValue)")
+        }
+    }
+
+    // MARK: - 19. Bruno 风格响应字段提取 (Post-Response Vars) 接口串联测试
+
+    func testResponseVarExtractionAndChaining() {
+        let jsonPayload = """
+        {
+            "token": "token_abc_123",
+            "account": {
+                "id": "acc_777"
+            }
+        }
+        """
+
+        let response = RPCResponse(
+            requestId: UUID(),
+            statusCode: 0,
+            statusName: "OK",
+            durationMs: 30.0,
+            responsePayload: jsonPayload,
+            initialMetadata: ["x-req-id": "req_uuid_001"]
+        )
+
+        let varRules: [ResponseVarRule] = [
+            ResponseVarRule(targetVariable: "auth_token", sourcePath: "res.body.token"),
+            ResponseVarRule(targetVariable: "user_account_id", sourcePath: "res.body.account.id"),
+            ResponseVarRule(targetVariable: "gateway_trace", sourcePath: "res.headers.x-req-id"),
+            ResponseVarRule(targetVariable: "disabled_var", sourcePath: "res.body.token", isEnabled: false)
+        ]
+
+        let extracted = AssertionEngine.shared.extractVariables(rules: varRules, response: response)
+
+        XCTAssertEqual(extracted.count, 3)
+        XCTAssertEqual(extracted["auth_token"], "token_abc_123")
+        XCTAssertEqual(extracted["user_account_id"], "acc_777")
+        XCTAssertEqual(extracted["gateway_trace"], "req_uuid_001")
+        XCTAssertNil(extracted["disabled_var"])
+    }
 }
 
 // MARK: - Mock URLProtocol for Nacos HTTP 测试

@@ -14,6 +14,8 @@ public struct RequestEditorView: View {
         case body = "请求体"
         case headers = "请求头"
         case auth = "认证鉴权"
+        case assertions = "断言测试"
+        case vars = "响应变量"
         case settings = "连接配置"
         case schema = "Proto 文档"
 
@@ -40,6 +42,13 @@ public struct RequestEditorView: View {
                     }
                 }()
                 tabButton(.auth, badge: authBadge)
+
+                let assertCount = request.assertions.filter { $0.isEnabled }.count
+                tabButton(.assertions, badge: assertCount > 0 ? "\(assertCount)" : nil)
+
+                let varsCount = request.responseVars.filter { $0.isEnabled }.count
+                tabButton(.vars, badge: varsCount > 0 ? "\(varsCount)" : nil)
+
                 tabButton(.settings, badge: nil)
                 tabButton(.schema, badge: request.serviceName.isEmpty ? nil : "Proto")
 
@@ -59,6 +68,10 @@ public struct RequestEditorView: View {
                     headersEditorView
                 case .auth:
                     authEditorView
+                case .assertions:
+                    assertionsEditorView
+                case .vars:
+                    varsEditorView
                 case .settings:
                     settingsEditorView
                 case .schema:
@@ -698,7 +711,377 @@ public struct RequestEditorView: View {
         }
     }
 
-    // MARK: - 4. Settings 编辑区 (Bruno 风格卡片布局，杜绝 Form 错乱)
+    // MARK: - 4. Assertions (声明式断言) 编辑区
+
+    private var assertionsEditorView: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("声明式响应断言 (Declarative Assertions)")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("请求完成后自动校验状态码、响应时延或字段内容，零脚本代码。")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                // 常用预设快捷添加
+                Menu {
+                    Button("状态码等于 0 (gRPC OK)") {
+                        request.assertions.append(AssertionRule(expression: "res.status", op: .equals, expectedValue: "0"))
+                        appState.markDirty(id: request.id)
+                    }
+                    Button("响应耗时小于 500ms") {
+                        request.assertions.append(AssertionRule(expression: "res.responseTime", op: .lessThan, expectedValue: "500"))
+                        appState.markDirty(id: request.id)
+                    }
+                    Button("响应体包含特定字段 (res.body)") {
+                        request.assertions.append(AssertionRule(expression: "res.body", op: .contains, expectedValue: "success"))
+                        appState.markDirty(id: request.id)
+                    }
+                } label: {
+                    Label("常用预设", systemImage: "sparkles")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+
+                Button(action: {
+                    request.assertions.append(AssertionRule())
+                    appState.markDirty(id: request.id)
+                }) {
+                    Label("添加断言", systemImage: "plus")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.borderedProminent)
+            }
+
+            if request.assertions.isEmpty {
+                VStack(spacing: 8) {
+                    Spacer()
+                    Image(systemName: "checkmark.seal")
+                        .font(.system(size: 28))
+                        .foregroundColor(.secondary)
+                    Text("当前请求尚未配置任何断言规则")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                    Button("添加默认断言 (状态码 == 0 且 耗时 < 500ms)") {
+                        request.assertions.append(AssertionRule(expression: "res.status", op: .equals, expectedValue: "0"))
+                        request.assertions.append(AssertionRule(expression: "res.responseTime", op: .lessThan, expectedValue: "500"))
+                        appState.markDirty(id: request.id)
+                    }
+                    .font(.system(size: 11))
+                    .buttonStyle(.bordered)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                VStack(spacing: 0) {
+                    HStack(spacing: 8) {
+                        Text("").frame(width: 20)
+                        Text("目标表达式 (Expression)").frame(width: 170, alignment: .leading)
+                        Text("比较操作符").frame(width: 130, alignment: .leading)
+                        Text("期望值 (Expected)").frame(maxWidth: .infinity, alignment: .leading)
+                        Text("").frame(width: 24)
+                    }
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.bottom, 4)
+
+                    Divider()
+
+                    ScrollView {
+                        VStack(spacing: 6) {
+                            ForEach($request.assertions) { $rule in
+                                HStack(spacing: 8) {
+                                    Toggle("", isOn: Binding(
+                                        get: { rule.isEnabled },
+                                        set: {
+                                            rule.isEnabled = $0
+                                            appState.markDirty(id: request.id)
+                                        }
+                                    ))
+                                    .toggleStyle(.checkbox)
+                                    .labelsHidden()
+                                    .frame(width: 20)
+
+                                    // 表达式输入与快速候选
+                                    HStack(spacing: 2) {
+                                        TextField("如 res.status 或 res.body.token", text: Binding(
+                                            get: { rule.expression },
+                                            set: {
+                                                rule.expression = $0
+                                                appState.markDirty(id: request.id)
+                                            }
+                                        ))
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .textFieldStyle(.plain)
+
+                                        Menu {
+                                            Section("基础指标") {
+                                                Button("res.status (gRPC 状态码)") { rule.expression = "res.status"; rule.expectedValue = "0" }
+                                                Button("res.statusName (状态名 OK)") { rule.expression = "res.statusName"; rule.expectedValue = "OK" }
+                                                Button("res.responseTime (响应耗时毫秒)") { rule.expression = "res.responseTime"; rule.op = .lessThan; rule.expectedValue = "300" }
+                                            }
+                                            Section("响应体") {
+                                                Button("res.body (完整载荷)") { rule.expression = "res.body" }
+                                                Button("res.body.token") { rule.expression = "res.body.token" }
+                                                Button("res.body.data.id") { rule.expression = "res.body.data.id" }
+                                            }
+                                            Section("响应头") {
+                                                Button("res.headers.content-type") { rule.expression = "res.headers.content-type" }
+                                            }
+                                        } label: {
+                                            Image(systemName: "chevron.down")
+                                                .font(.system(size: 8))
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .menuStyle(.borderlessButton)
+                                        .fixedSize()
+                                    }
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 4)
+                                    .background(Color(NSColor.controlBackgroundColor))
+                                    .cornerRadius(5)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 5)
+                                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                                    )
+                                    .frame(width: 170)
+
+                                    // 操作符选择
+                                    Picker("", selection: Binding(
+                                        get: { rule.op },
+                                        set: {
+                                            rule.op = $0
+                                            appState.markDirty(id: request.id)
+                                        }
+                                    )) {
+                                        ForEach(AssertionOperator.allCases) { op in
+                                            Text(op.rawValue).tag(op)
+                                        }
+                                    }
+                                    .frame(width: 130)
+
+                                    // 期望值输入
+                                    if rule.op != .isDefined && rule.op != .isNullOrEmpty {
+                                        TextField("期望值", text: Binding(
+                                            get: { rule.expectedValue },
+                                            set: {
+                                                rule.expectedValue = $0
+                                                appState.markDirty(id: request.id)
+                                            }
+                                        ))
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .textFieldStyle(.roundedBorder)
+                                    } else {
+                                        Text("（无需期望值）")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(.secondary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+
+                                    Button(action: {
+                                        request.assertions.removeAll { $0.id == rule.id }
+                                        appState.markDirty(id: request.id)
+                                    }) {
+                                        Image(systemName: "trash")
+                                            .foregroundColor(.red.opacity(0.8))
+                                            .font(.system(size: 10))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .frame(width: 24)
+                                }
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 5. Post-Response Vars (响应字段提取) 编辑区
+
+    private var varsEditorView: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("响应变量提取 (Post-Response Vars / 接口串联)")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("调用返回后，自动从 JSON 响应体或 Header 中提取字段，无感同步写入活动环境变量。")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                Menu {
+                    Button("提取 Token (res.body.token -> jwt_token)") {
+                        request.responseVars.append(ResponseVarRule(targetVariable: "jwt_token", sourcePath: "res.body.token"))
+                        appState.markDirty(id: request.id)
+                    }
+                    Button("提取用户 ID (res.body.user_id -> current_user_id)") {
+                        request.responseVars.append(ResponseVarRule(targetVariable: "current_user_id", sourcePath: "res.body.user_id"))
+                        appState.markDirty(id: request.id)
+                    }
+                    Button("提取链路标识 (res.headers.x-request-id -> last_trace_id)") {
+                        request.responseVars.append(ResponseVarRule(targetVariable: "last_trace_id", sourcePath: "res.headers.x-request-id"))
+                        appState.markDirty(id: request.id)
+                    }
+                } label: {
+                    Label("常用范例", systemImage: "sparkles")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+
+                Button(action: {
+                    request.responseVars.append(ResponseVarRule())
+                    appState.markDirty(id: request.id)
+                }) {
+                    Label("添加提取规则", systemImage: "plus")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.borderedProminent)
+            }
+
+            if request.responseVars.isEmpty {
+                VStack(spacing: 8) {
+                    Spacer()
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 28))
+                        .foregroundColor(.secondary)
+                    Text("当前请求暂无响应变量提取规则")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                    Button("添加 Token 自动透传规则 (res.body.token -> jwt_token)") {
+                        request.responseVars.append(ResponseVarRule(targetVariable: "jwt_token", sourcePath: "res.body.token"))
+                        appState.markDirty(id: request.id)
+                    }
+                    .font(.system(size: 11))
+                    .buttonStyle(.bordered)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                VStack(spacing: 0) {
+                    HStack(spacing: 8) {
+                        Text("").frame(width: 20)
+                        Text("提取来源路径 (Source Path)").frame(maxWidth: .infinity, alignment: .leading)
+                        Text("").frame(width: 20)
+                        Text("写入目标环境变量名 (Target Var)").frame(maxWidth: .infinity, alignment: .leading)
+                        Text("").frame(width: 24)
+                    }
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.bottom, 4)
+
+                    Divider()
+
+                    ScrollView {
+                        VStack(spacing: 6) {
+                            ForEach($request.responseVars) { $rule in
+                                HStack(spacing: 8) {
+                                    Toggle("", isOn: Binding(
+                                        get: { rule.isEnabled },
+                                        set: {
+                                            rule.isEnabled = $0
+                                            appState.markDirty(id: request.id)
+                                        }
+                                    ))
+                                    .toggleStyle(.checkbox)
+                                    .labelsHidden()
+                                    .frame(width: 20)
+
+                                    // 来源路径
+                                    HStack(spacing: 2) {
+                                        TextField("如 res.body.token 或 res.body.data.id", text: Binding(
+                                            get: { rule.sourcePath },
+                                            set: {
+                                                rule.sourcePath = $0
+                                                appState.markDirty(id: request.id)
+                                            }
+                                        ))
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .textFieldStyle(.plain)
+
+                                        Menu {
+                                            Button("res.body.token") { rule.sourcePath = "res.body.token" }
+                                            Button("res.body.data.id") { rule.sourcePath = "res.body.data.id" }
+                                            Button("res.body.user_id") { rule.sourcePath = "res.body.user_id" }
+                                            Button("res.headers.x-request-id") { rule.sourcePath = "res.headers.x-request-id" }
+                                        } label: {
+                                            Image(systemName: "chevron.down")
+                                                .font(.system(size: 8))
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .menuStyle(.borderlessButton)
+                                        .fixedSize()
+                                    }
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 4)
+                                    .background(Color(NSColor.controlBackgroundColor))
+                                    .cornerRadius(5)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 5)
+                                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                                    )
+
+                                    Image(systemName: "arrow.right")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundColor(.accentColor)
+                                        .frame(width: 20)
+
+                                    // 目标变量
+                                    HStack(spacing: 2) {
+                                        Text("{{")
+                                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                        TextField("变量名", text: Binding(
+                                            get: { rule.targetVariable },
+                                            set: {
+                                                rule.targetVariable = $0
+                                                appState.markDirty(id: request.id)
+                                            }
+                                        ))
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .textFieldStyle(.plain)
+                                        Text("}}")
+                                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 4)
+                                    .background(Color(NSColor.controlBackgroundColor))
+                                    .cornerRadius(5)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 5)
+                                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                                    )
+
+                                    Button(action: {
+                                        request.responseVars.removeAll { $0.id == rule.id }
+                                        appState.markDirty(id: request.id)
+                                    }) {
+                                        Image(systemName: "trash")
+                                            .foregroundColor(.red.opacity(0.8))
+                                            .font(.system(size: 10))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .frame(width: 24)
+                                }
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 6. Settings 编辑区 (Bruno 风格卡片布局，杜绝 Form 错乱)
 
     private var settingsEditorView: some View {
         ScrollView {

@@ -441,8 +441,39 @@ public final class AppState: ObservableObject {
             )
 
             await MainActor.run {
-                self.responses[req.id] = resp
-                self.history.insert(resp, at: 0)
+                var finalResp = resp
+
+                // 1. 执行声明式断言校验 (Bruno Assertions)
+                let assertionResults = AssertionEngine.shared.evaluateAssertions(
+                    rules: req.assertions,
+                    response: resp
+                )
+                finalResp.assertionResults = assertionResults
+
+                // 2. 提取响应字段到环境变量 (Post-Response Vars)
+                let extracted = AssertionEngine.shared.extractVariables(
+                    rules: req.responseVars,
+                    response: resp
+                )
+                finalResp.extractedVariables = extracted
+
+                // 如果提取到了变量，自动同步更新到当前活动环境并持久化
+                if !extracted.isEmpty, let envId = self.workspace.activeEnvironmentId,
+                   let envIdx = self.workspace.environments.firstIndex(where: { $0.id == envId }) {
+                    for (k, v) in extracted {
+                        if let vIdx = self.workspace.environments[envIdx].variables.firstIndex(where: { $0.key == k }) {
+                            self.workspace.environments[envIdx].variables[vIdx].value = v
+                        } else {
+                            self.workspace.environments[envIdx].variables.append(
+                                VariableItem(key: k, value: v, notes: "由请求 [\(req.name)] 自动提取")
+                            )
+                        }
+                    }
+                    self.saveState()
+                }
+
+                self.responses[req.id] = finalResp
+                self.history.insert(finalResp, at: 0)
                 if self.history.count > 100 {
                     self.history.removeLast()
                 }

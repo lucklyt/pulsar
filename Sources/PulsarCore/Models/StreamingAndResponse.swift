@@ -73,6 +73,8 @@ public struct RPCResponse: Identifiable, Codable, Equatable {
     public var streamEvents: [StreamEvent]
     public var stats: RPCStatistics
     public var executedAt: Date
+    public var assertionResults: [AssertionResult]
+    public var extractedVariables: [String: String]
 
     public var isSuccess: Bool {
         statusCode == 0
@@ -91,7 +93,9 @@ public struct RPCResponse: Identifiable, Codable, Equatable {
         trailingMetadata: [String: String] = [:],
         streamEvents: [StreamEvent] = [],
         stats: RPCStatistics = RPCStatistics(),
-        executedAt: Date = Date()
+        executedAt: Date = Date(),
+        assertionResults: [AssertionResult] = [],
+        extractedVariables: [String: String] = [:]
     ) {
         self.id = id
         self.requestId = requestId
@@ -106,6 +110,33 @@ public struct RPCResponse: Identifiable, Codable, Equatable {
         self.streamEvents = streamEvents
         self.stats = stats
         self.executedAt = executedAt
+        self.assertionResults = assertionResults
+        self.extractedVariables = extractedVariables
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, requestId, statusCode, statusName, errorMessage, durationMs
+        case responseSize, responsePayload, initialMetadata, trailingMetadata
+        case streamEvents, stats, executedAt, assertionResults, extractedVariables
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.requestId = try container.decodeIfPresent(UUID.self, forKey: .requestId) ?? UUID()
+        self.statusCode = try container.decodeIfPresent(Int.self, forKey: .statusCode) ?? 0
+        self.statusName = try container.decodeIfPresent(String.self, forKey: .statusName) ?? "OK"
+        self.errorMessage = try container.decodeIfPresent(String.self, forKey: .errorMessage)
+        self.durationMs = try container.decodeIfPresent(Double.self, forKey: .durationMs) ?? 0.0
+        self.responseSize = try container.decodeIfPresent(Int.self, forKey: .responseSize) ?? 0
+        self.responsePayload = try container.decodeIfPresent(String.self, forKey: .responsePayload) ?? ""
+        self.initialMetadata = try container.decodeIfPresent([String: String].self, forKey: .initialMetadata) ?? [:]
+        self.trailingMetadata = try container.decodeIfPresent([String: String].self, forKey: .trailingMetadata) ?? [:]
+        self.streamEvents = try container.decodeIfPresent([StreamEvent].self, forKey: .streamEvents) ?? []
+        self.stats = try container.decodeIfPresent(RPCStatistics.self, forKey: .stats) ?? RPCStatistics()
+        self.executedAt = try container.decodeIfPresent(Date.self, forKey: .executedAt) ?? Date()
+        self.assertionResults = try container.decodeIfPresent([AssertionResult].self, forKey: .assertionResults) ?? []
+        self.extractedVariables = try container.decodeIfPresent([String: String].self, forKey: .extractedVariables) ?? [:]
     }
 }
 

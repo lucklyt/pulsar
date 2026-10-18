@@ -12,6 +12,7 @@ public struct ResponseInspectorView: View {
 
     enum ResponseTab: String, CaseIterable, Identifiable {
         case body = "响应体"
+        case assertions = "断言测试"
         case headers = "响应头"
         case timeline = "时间线"
         case stats = "统计指标"
@@ -27,6 +28,13 @@ public struct ResponseInspectorView: View {
                 // 左侧 Bruno 风格紧凑选项卡 (自适应内容宽度，零多余空白)
                 HStack(spacing: 0) {
                     tabButton(.body, badge: nil)
+
+                    if let resp = response, !resp.assertionResults.isEmpty {
+                        let passed = resp.assertionResults.filter { $0.passed }.count
+                        tabButton(.assertions, badge: "\(passed)/\(resp.assertionResults.count)")
+                    } else if let req = currentRequest, !req.assertions.isEmpty {
+                        tabButton(.assertions, badge: "\(req.assertions.filter { $0.isEnabled }.count)")
+                    }
 
                     let totalHeaders = (response?.initialMetadata.count ?? 0) + (response?.trailingMetadata.count ?? 0)
                     tabButton(.headers, badge: totalHeaders > 0 ? "\(totalHeaders)" : nil)
@@ -55,6 +63,8 @@ public struct ResponseInspectorView: View {
                 switch selectedTab {
                 case .body:
                     responseBodyView
+                case .assertions:
+                    assertionsResultsView
                 case .timeline:
                     streamTimelineView
                 case .headers:
@@ -153,6 +163,54 @@ public struct ResponseInspectorView: View {
                 .padding(.vertical, 2)
                 .background(Color.gray.opacity(0.08))
                 .cornerRadius(4)
+
+                // 断言执行结果指示徽标
+                if !resp.assertionResults.isEmpty {
+                    let passed = resp.assertionResults.filter { $0.passed }.count
+                    let total = resp.assertionResults.count
+                    let allPassed = passed == total
+
+                    Button(action: {
+                        selectedTab = .assertions
+                    }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: allPassed ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                .font(.system(size: 8))
+                            Text(allPassed ? "\(passed)/\(total) 断言通过" : "\(total - passed) 断言失败")
+                                .font(.system(size: 9, weight: .bold))
+                                .lineLimit(1)
+                        }
+                        .foregroundColor(allPassed ? .green : .red)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background((allPassed ? Color.green : Color.red).opacity(0.12))
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+                    .help(allPassed ? "所有断言校验全部通过！点击查看明细" : "存在未通过的断言校验，点击查看明细")
+                }
+
+                // 变量提取成功指示徽标
+                if !resp.extractedVariables.isEmpty {
+                    Button(action: {
+                        selectedTab = .assertions
+                    }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "bolt.fill")
+                                .font(.system(size: 8))
+                            Text("已提取 \(resp.extractedVariables.count) 变量")
+                                .font(.system(size: 9, weight: .semibold))
+                                .lineLimit(1)
+                        }
+                        .foregroundColor(.purple)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.purple.opacity(0.12))
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+                    .help("已自动更新环境变量:\n" + resp.extractedVariables.map { "{{$0.key}} = \($0.value)" }.joined(separator: "\n"))
+                }
 
                 // 清空响应按钮
                 Button(action: {
@@ -408,6 +466,146 @@ public struct ResponseInspectorView: View {
                 }
                 .background(Color(NSColor.controlBackgroundColor))
                 .cornerRadius(6)
+            }
+        }
+    }
+
+    // MARK: - 断言测试与响应变量结果面板 (Bruno Assertions & Extracted Vars)
+
+    private var assertionsResultsView: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let resp = response, !resp.assertionResults.isEmpty {
+                let passed = resp.assertionResults.filter { $0.passed }.count
+                let total = resp.assertionResults.count
+                let allPassed = passed == total
+
+                // 汇总指示卡片
+                HStack(spacing: 10) {
+                    Image(systemName: allPassed ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(allPassed ? .green : .red)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(allPassed ? "所有断言校验通过 (\(passed)/\(total))" : "部分断言未通过 (\(passed)/\(total) 通过)")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(allPassed ? .green : .red)
+                        Text(allPassed ? "返回状态码、时延和载荷完全符合声明式预期。" : "存在与预期不符的返回字段，请检查下方断言明细。")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(10)
+                .background((allPassed ? Color.green : Color.red).opacity(0.1))
+                .cornerRadius(8)
+
+                // 逐条结果列表
+                ScrollView {
+                    VStack(spacing: 8) {
+                        ForEach(resp.assertionResults) { res in
+                            HStack(spacing: 10) {
+                                Image(systemName: res.passed ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                    .foregroundColor(res.passed ? .green : .red)
+                                    .font(.system(size: 14))
+
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack(spacing: 6) {
+                                        Text(res.expression)
+                                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                        Text(res.op.shortSymbol)
+                                            .font(.system(size: 11, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                        if res.op != .isDefined && res.op != .isNullOrEmpty {
+                                            Text(res.expectedValue)
+                                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                                .foregroundColor(.accentColor)
+                                        }
+                                    }
+
+                                    HStack(spacing: 6) {
+                                        Text("实际值: \(res.actualValue.isEmpty ? "(空)" : res.actualValue)")
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                        Text("•")
+                                            .font(.system(size: 9))
+                                            .foregroundColor(.secondary)
+                                        Text(res.message)
+                                            .font(.system(size: 10))
+                                            .foregroundColor(res.passed ? .secondary : .red)
+                                    }
+                                }
+
+                                Spacer()
+
+                                Text(res.passed ? "PASSED" : "FAILED")
+                                    .font(.system(size: 9, weight: .heavy, design: .monospaced))
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background((res.passed ? Color.green : Color.red).opacity(0.12))
+                                    .foregroundColor(res.passed ? .green : .red)
+                                    .cornerRadius(3)
+                            }
+                            .padding(8)
+                            .background(Color(NSColor.controlBackgroundColor))
+                            .cornerRadius(6)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.gray.opacity(0.15), lineWidth: 1)
+                            )
+                        }
+
+                        // 如果该请求同时触发了响应变量提取，列出已同步项
+                        if !resp.extractedVariables.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "bolt.fill")
+                                        .foregroundColor(.purple)
+                                        .font(.system(size: 11))
+                                    Text("已提取并同步至活动环境变量 (\(resp.extractedVariables.count) 项)")
+                                        .font(.system(size: 11, weight: .semibold))
+                                }
+                                .padding(.top, 8)
+
+                                ForEach(Array(resp.extractedVariables.sorted(by: { $0.key < $1.key })), id: \.key) { k, v in
+                                    HStack {
+                                        Text("{{\(k)}}")
+                                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                            .foregroundColor(.purple)
+                                        Text("=")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(.secondary)
+                                        Text(v)
+                                            .font(.system(size: 11, design: .monospaced))
+                                            .lineLimit(1)
+                                        Spacer()
+                                        Text("已写入环境")
+                                            .font(.system(size: 9))
+                                            .foregroundColor(.green)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.purple.opacity(0.06))
+                                    .cornerRadius(4)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                VStack(spacing: 8) {
+                    Spacer().frame(height: 40)
+                    Image(systemName: "checkmark.seal")
+                        .font(.system(size: 32))
+                        .foregroundColor(.secondary)
+                    Text("当前请求尚未配置断言或尚未触发调用")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                    Text("可在左侧请求编辑器【断言测试】选项卡中添加免代码断言规则。")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
             }
         }
     }

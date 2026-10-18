@@ -194,6 +194,8 @@ public struct RequestModel: Identifiable, Codable, Equatable, Hashable {
     public var timeoutSeconds: Double
     public var createdAt: Date
     public var updatedAt: Date
+    public var assertions: [AssertionRule]
+    public var responseVars: [ResponseVarRule]
 
     public init(
         id: UUID = UUID(),
@@ -211,7 +213,9 @@ public struct RequestModel: Identifiable, Codable, Equatable, Hashable {
         discovery: ServiceDiscoveryConfig = ServiceDiscoveryConfig(),
         timeoutSeconds: Double = 15.0,
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        assertions: [AssertionRule] = [],
+        responseVars: [ResponseVarRule] = []
     ) {
         self.id = id
         self.name = name
@@ -229,5 +233,35 @@ public struct RequestModel: Identifiable, Codable, Equatable, Hashable {
         self.timeoutSeconds = timeoutSeconds
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.assertions = assertions
+        self.responseVars = responseVars
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, collectionId, folderId, address, serviceName, methodName, callType
+        case payload, metadata, auth, tls, discovery, timeoutSeconds, createdAt, updatedAt
+        case assertions, responseVars
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Untitled Request"
+        self.collectionId = try container.decodeIfPresent(UUID.self, forKey: .collectionId)
+        self.folderId = try container.decodeIfPresent(UUID.self, forKey: .folderId)
+        self.address = try container.decodeIfPresent(String.self, forKey: .address) ?? "127.0.0.1:50051"
+        self.serviceName = try container.decodeIfPresent(String.self, forKey: .serviceName) ?? ""
+        self.methodName = try container.decodeIfPresent(String.self, forKey: .methodName) ?? ""
+        self.callType = try container.decodeIfPresent(GRPCCallType.self, forKey: .callType) ?? .unary
+        self.payload = try container.decodeIfPresent(String.self, forKey: .payload) ?? "{\n  \n}"
+        self.metadata = try container.decodeIfPresent([MetadataHeader].self, forKey: .metadata) ?? []
+        self.auth = try container.decodeIfPresent(AuthConfig.self, forKey: .auth) ?? AuthConfig()
+        self.tls = try container.decodeIfPresent(TLSConfig.self, forKey: .tls) ?? TLSConfig()
+        self.discovery = try container.decodeIfPresent(ServiceDiscoveryConfig.self, forKey: .discovery) ?? ServiceDiscoveryConfig()
+        self.timeoutSeconds = try container.decodeIfPresent(Double.self, forKey: .timeoutSeconds) ?? 15.0
+        self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        self.updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+        self.assertions = try container.decodeIfPresent([AssertionRule].self, forKey: .assertions) ?? []
+        self.responseVars = try container.decodeIfPresent([ResponseVarRule].self, forKey: .responseVars) ?? []
     }
 }
