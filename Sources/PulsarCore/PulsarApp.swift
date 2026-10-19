@@ -19,7 +19,7 @@ public struct PulsarApp: App {
                     NSApplication.shared.orderFrontStandardAboutPanel(
                         options: [
                             NSApplication.AboutPanelOptionKey.applicationName: "Pulsar",
-                            NSApplication.AboutPanelOptionKey.version: "2.0.6",
+                            NSApplication.AboutPanelOptionKey.version: "2.0.7",
                             NSApplication.AboutPanelOptionKey.credits: NSAttributedString(string: "Pulsar - The pulsing heart of native gRPC testing on macOS.\nDesigned for high-speed microservices & gRPC streaming.")
                         ]
                     )

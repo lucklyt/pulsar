@@ -98,24 +98,12 @@ public struct ResponseInspectorView: View {
                             }
                         }
                     } label: {
-                        HStack(spacing: 3) {
-                            Text("更多")
-                                .font(.system(size: 11, weight: secondaryTabs.contains(selectedTab) ? .semibold : .regular))
-                                .foregroundColor(secondaryTabs.contains(selectedTab) ? .primary : .secondary)
-
-                            if hasSecondaryActiveBadge && !secondaryTabs.contains(selectedTab) {
-                                Circle()
-                                    .fill(Color.accentColor)
-                                    .frame(width: 5, height: 5)
-                            }
-
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 7, weight: .bold))
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 7)
-                        .contentShape(Rectangle())
+                        Text("更多" + (hasSecondaryActiveBadge && !secondaryTabs.contains(selectedTab) ? " •" : ""))
+                            .font(.system(size: 11, weight: secondaryTabs.contains(selectedTab) ? .semibold : .regular))
+                            .foregroundColor(secondaryTabs.contains(selectedTab) ? .primary : .secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 7)
+                            .contentShape(Rectangle())
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
