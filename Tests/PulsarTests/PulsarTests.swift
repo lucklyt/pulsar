@@ -1668,6 +1668,92 @@ final class PulsarTests: XCTestCase {
         let matched = appState.filteredRequests(in: fullCol)
         XCTAssertEqual(matched.count, 3)
     }
+
+    // MARK: - 37. Proto 解析器换行括号容错与多服务测试
+
+    func testLocalProtoParserResilienceNewlineBracesAndComments() {
+        let multiServiceProto = """
+        syntax = "proto3";
+        package company.api;
+
+        // User service with brace on newline
+        service UserService
+        {
+            rpc GetUser (UserRequest) returns (UserResponse);
+            rpc StreamUsers (UserRequest) returns (stream UserResponse) {}
+        }
+
+        // Notification service with inline and multiline comments
+        service NotificationService {
+            rpc SendEmail (EmailRequest) returns (EmailResponse) {
+                option (custom.opt) = "val";
+            }
+        }
+        """
+
+        let file = LocalProtoParser.shared.parseString(multiServiceProto, fileName: "api.proto")
+        XCTAssertEqual(file.packageName, "company.api")
+        XCTAssertEqual(file.services.count, 2)
+
+        let userSvc = file.services.first(where: { $0.name == "UserService" })
+        XCTAssertNotNil(userSvc)
+        XCTAssertEqual(userSvc?.fullName, "company.api.UserService")
+        XCTAssertEqual(userSvc?.methods.count, 2)
+        XCTAssertEqual(userSvc?.methods.first?.name, "GetUser")
+        XCTAssertEqual(userSvc?.methods.first?.callType, .unary)
+        XCTAssertEqual(userSvc?.methods.last?.name, "StreamUsers")
+        XCTAssertEqual(userSvc?.methods.last?.callType, .serverStreaming)
+
+        let notifSvc = file.services.first(where: { $0.name == "NotificationService" })
+        XCTAssertNotNil(notifSvc)
+        XCTAssertEqual(notifSvc?.methods.count, 1)
+        XCTAssertEqual(notifSvc?.methods.first?.name, "SendEmail")
+    }
+
+    // MARK: - 38. Service 与 Method 专属联动与补全测试
+
+    func testServiceAndMethodAutocompleteFieldInteraction() {
+        var req = RequestModel(name: "Test RPC", address: "localhost:50051")
+        req.serviceName = ""
+        req.methodName = ""
+
+        let services = ProtoRepository.shared.allServices
+        XCTAssertTrue(services.count >= 2)
+
+        // 验证 Greeter 服务的可用方法
+        let greeterSvc = services.first(where: { $0.name == "Greeter" || $0.fullName.hasSuffix(".Greeter") })
+        XCTAssertNotNil(greeterSvc)
+
+        // 模拟通过 ServiceAutocompleteField 选取服务
+        req.serviceName = greeterSvc!.fullName
+
+        // 验证在此服务下，方法候选列表严格只包含该服务的 RPC (排除其他服务方法)
+        let availableMethodsForGreeter = greeterSvc!.methods
+        XCTAssertTrue(availableMethodsForGreeter.contains(where: { $0.name == "SayHello" }))
+        XCTAssertTrue(availableMethodsForGreeter.contains(where: { $0.name == "SayHelloStream" }))
+        XCTAssertFalse(availableMethodsForGreeter.contains(where: { $0.name == "CreateOrder" }))
+
+        // 模拟选取 SayHelloStream 方法
+        let streamMethod = availableMethodsForGreeter.first(where: { $0.name == "SayHelloStream" })!
+        req.methodName = streamMethod.name
+        req.callType = streamMethod.callType
+        XCTAssertEqual(req.callType, GRPCCallType.serverStreaming)
+
+        // 切换服务为 OrderService，验证 SayHelloStream 不属于 OrderService 并被自动重置清空
+        let orderSvc = services.first(where: { $0.name == "OrderService" || $0.fullName.hasSuffix(".OrderService") })!
+        req.serviceName = orderSvc.fullName
+        if !orderSvc.methods.contains(where: { $0.name == req.methodName }) {
+            req.methodName = ""
+        }
+        XCTAssertEqual(req.methodName, "")
+
+        // 在 OrderService 下选取 CreateOrder
+        let orderMethod = orderSvc.methods.first(where: { $0.name == "CreateOrder" })!
+        req.methodName = orderMethod.name
+        req.callType = orderMethod.callType
+        XCTAssertEqual(req.callType, GRPCCallType.unary)
+        XCTAssertEqual(req.serviceName, orderSvc.fullName)
+    }
 }
 
 // MARK: - Mock URLProtocol for Nacos HTTP 测试

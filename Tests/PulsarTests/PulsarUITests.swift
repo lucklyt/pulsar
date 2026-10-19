@@ -213,6 +213,27 @@ final class PulsarUITests: XCTestCase {
         appState.isExecuting = false
         hostingView.layoutSubtreeIfNeeded()
         XCTAssertFalse(appState.isExecuting)
+
+        // 验证 ServiceAutocompleteField 与 MethodAutocompleteField 正常集成与尺寸计算
+        let svcField = ServiceAutocompleteField(
+            serviceName: .constant("helloworld.Greeter"),
+            methodName: .constant("SayHello"),
+            allServices: ProtoRepository.shared.allServices
+        )
+        let svcHost = NSHostingView(rootView: svcField)
+        svcHost.frame = NSRect(x: 0, y: 0, width: 300, height: 28)
+        svcHost.layoutSubtreeIfNeeded()
+        XCTAssertTrue(svcHost.fittingSize.width > 0)
+
+        let methodField = MethodAutocompleteField(
+            serviceName: "helloworld.Greeter",
+            methodName: .constant("SayHello"),
+            allServices: ProtoRepository.shared.allServices
+        )
+        let methodHost = NSHostingView(rootView: methodField)
+        methodHost.frame = NSRect(x: 0, y: 0, width: 300, height: 28)
+        methodHost.layoutSubtreeIfNeeded()
+        XCTAssertTrue(methodHost.fittingSize.width > 0)
     }
 
     // MARK: - 5. 请求编辑器 RequestEditorView 子选项卡与批量编辑渲染

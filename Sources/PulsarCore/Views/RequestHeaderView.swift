@@ -220,87 +220,71 @@ public struct RequestHeaderView: View {
                 }
             }
 
-            // 第三行：Service 与 Method 选择栏 (带 Proto 快速填充菜单)
+            // 第三行：Service 与 Method 智能选择与自动补全输入栏 (专属过滤与联动)
+            let allServices = ProtoRepository.shared.allServices
+            let historyServices = appState.workspaceServices
+
             HStack(spacing: 8) {
-                HStack(spacing: 4) {
-                    Text("服务:")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                    TextField("helloworld.Greeter", text: Binding(
+                ServiceAutocompleteField(
+                    serviceName: Binding(
                         get: { request.serviceName },
                         set: {
                             request.serviceName = $0
                             appState.markDirty(id: request.id)
                         }
-                    ))
-                    .font(.system(size: 11, design: .monospaced))
-                    .textFieldStyle(.plain)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color(NSColor.controlBackgroundColor).opacity(0.7))
-                .cornerRadius(5)
-
-                HStack(spacing: 4) {
-                    Text("方法:")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                    TextField("SayHello", text: Binding(
+                    ),
+                    methodName: Binding(
                         get: { request.methodName },
                         set: {
                             request.methodName = $0
                             appState.markDirty(id: request.id)
                         }
-                    ))
-                    .font(.system(size: 11, design: .monospaced))
-                    .textFieldStyle(.plain)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color(NSColor.controlBackgroundColor).opacity(0.7))
-                .cornerRadius(5)
-
-                // 从本地 Proto 选择菜单
-                let loadedMethods = ProtoRepository.shared.allServices.flatMap { $0.methods }
-                if !loadedMethods.isEmpty {
-                    Menu {
-                        ForEach(ProtoRepository.shared.allServices) { svc in
-                            Section(header: Text(svc.name)) {
-                                ForEach(svc.methods) { m in
-                                    Button("\(m.name) (\(m.callType.shortTag))") {
-                                        request.serviceName = m.serviceName
-                                        request.methodName = m.name
-                                        request.callType = m.callType
-                                        if let inputMsg = ProtoRepository.shared.findMessage(by: m.inputMessage.name) {
-                                             request.payload = MockJSONGenerator.shared.generateMockJSON(for: inputMsg)
-                                        }
-                                        ProtoRepository.shared.applyExtensions(to: &request, method: m)
-                                        appState.markDirty(id: request.id)
+                    ),
+                    allServices: allServices,
+                    historyServices: historyServices,
+                    onSelectService: { svc in
+                        request.serviceName = svc.fullName
+                        if !svc.methods.contains(where: { $0.name == request.methodName }) {
+                            if svc.methods.count == 1, let single = svc.methods.first {
+                                request.methodName = single.name
+                                request.callType = single.callType
+                                if request.payload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || request.payload == "{}" {
+                                    if let inputMsg = ProtoRepository.shared.findMessage(by: single.inputMessage.name) {
+                                        request.payload = MockJSONGenerator.shared.generateMockJSON(for: inputMsg)
                                     }
                                 }
+                                ProtoRepository.shared.applyExtensions(to: &request, method: single)
+                            } else {
+                                request.methodName = ""
                             }
                         }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "doc.badge.gearshape")
-                            Text("Proto 选单")
-                                .lineLimit(1)
-                            Image(systemName: "chevron.down").font(.system(size: 7))
-                        }
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.purple)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.purple.opacity(0.1))
-                        .cornerRadius(5)
+                        appState.markDirty(id: request.id)
                     }
-                    .buttonStyle(.plain)
-                    .fixedSize()
-                }
+                )
+
+                MethodAutocompleteField(
+                    serviceName: request.serviceName,
+                    methodName: Binding(
+                        get: { request.methodName },
+                        set: {
+                            request.methodName = $0
+                            appState.markDirty(id: request.id)
+                        }
+                    ),
+                    allServices: allServices,
+                    onSelectMethod: { m in
+                        request.serviceName = m.serviceName
+                        request.methodName = m.name
+                        request.callType = m.callType
+                        if request.payload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || request.payload == "{}" {
+                            if let inputMsg = ProtoRepository.shared.findMessage(by: m.inputMessage.name) {
+                                request.payload = MockJSONGenerator.shared.generateMockJSON(for: inputMsg)
+                            }
+                        }
+                        ProtoRepository.shared.applyExtensions(to: &request, method: m)
+                        appState.markDirty(id: request.id)
+                    }
+                )
             }
         }
         .padding(12)

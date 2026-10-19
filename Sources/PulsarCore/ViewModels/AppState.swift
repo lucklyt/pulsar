@@ -104,6 +104,18 @@ public final class AppState: ObservableObject {
         return items
     }
 
+    /// 工作区所有集合中已配置的全部 Service 名称 (去重排序)
+    public var workspaceServices: [String] {
+        var set = Set<String>()
+        for col in workspace.collections {
+            for req in col.requests {
+                let s = req.serviceName.trimmingCharacters(in: .whitespaces)
+                if !s.isEmpty { set.insert(s) }
+            }
+        }
+        return Array(set).sorted()
+    }
+
     // MARK: - 标签页 (Tabs) 控制
 
     public func openTab(for request: RequestModel) {

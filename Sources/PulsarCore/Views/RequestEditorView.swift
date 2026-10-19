@@ -1370,7 +1370,7 @@ public struct RequestEditorView: View {
                     Text("未关联到本地 Proto 结构定义")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
-                    Text("在顶部点击“Proto 选单”选择对应 Service/Method 即可在此查看架构文档")
+                    Text("在顶部“服务”与“方法”中选择对应 Service/Method 即可在此查看架构文档")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                     Spacer()

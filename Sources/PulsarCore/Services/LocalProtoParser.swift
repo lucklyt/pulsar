@@ -76,7 +76,7 @@ public final class LocalProtoParser {
             }
 
             // 4. extend 扩展定义块 (extend <Message> { ... })
-            if line.hasPrefix("extend ") && line.contains("{") {
+            if isDeclaration(line, keyword: "extend") && (line.contains("{") || hasBlockOpening(lines: lines, startIndex: index)) {
                 let (extDefs, newIndex) = parseExtendBlock(lines: lines, startIndex: index)
                 extensions.append(contentsOf: extDefs)
                 index = newIndex
@@ -85,7 +85,7 @@ public final class LocalProtoParser {
             }
 
             // 5. option (全局文件选项)
-            if line.hasPrefix("option ") && !line.contains("service ") {
+            if isDeclaration(line, keyword: "option") && !line.contains("service ") {
                 if let opt = parseOption(from: line) {
                     fileOptions.append(opt)
                 }
@@ -95,7 +95,7 @@ public final class LocalProtoParser {
             }
 
             // 6. service 服务定义块
-            if line.hasPrefix("service ") && line.contains("{") {
+            if isDeclaration(line, keyword: "service") && (line.contains("{") || hasBlockOpening(lines: lines, startIndex: index)) {
                 let (svc, newIndex) = parseService(lines: lines, startIndex: index, packageName: packageName, leadingComment: currentComment)
                 protoFile.services.append(svc)
                 index = newIndex
@@ -104,7 +104,7 @@ public final class LocalProtoParser {
             }
 
             // 7. message 结构体定义块
-            if line.hasPrefix("message ") && line.contains("{") {
+            if isDeclaration(line, keyword: "message") && (line.contains("{") || hasBlockOpening(lines: lines, startIndex: index)) {
                 let (msg, newIndex) = parseMessage(lines: lines, startIndex: index, packageName: packageName)
                 protoFile.messages.append(msg)
                 index = newIndex
@@ -113,7 +113,7 @@ public final class LocalProtoParser {
             }
 
             // 8. enum 枚举定义块
-            if line.hasPrefix("enum ") && line.contains("{") {
+            if isDeclaration(line, keyword: "enum") && (line.contains("{") || hasBlockOpening(lines: lines, startIndex: index)) {
                 let (enumDesc, newIndex) = parseEnum(lines: lines, startIndex: index)
                 protoFile.enums.append(enumDesc)
                 index = newIndex
@@ -132,6 +132,21 @@ public final class LocalProtoParser {
         protoFile.extensionDefs = extensions
 
         return protoFile
+    }
+
+    private func hasBlockOpening(lines: [String], startIndex: Int) -> Bool {
+        var j = startIndex
+        while j < lines.count && j < startIndex + 5 {
+            let l = lines[j].trimmingCharacters(in: .whitespaces)
+            if l.contains("{") { return true }
+            if l.hasSuffix(";") { return false }
+            j += 1
+        }
+        return false
+    }
+
+    private func isDeclaration(_ line: String, keyword: String) -> Bool {
+        line.hasPrefix("\(keyword) ") || line.starts(with: "\(keyword)\t")
     }
 
     // MARK: - Extend 扩展块解析
@@ -185,7 +200,8 @@ public final class LocalProtoParser {
 
     private func parseService(lines: [String], startIndex: Int, packageName: String, leadingComment: String) -> (ProtoServiceDescriptor, Int) {
         let firstLine = lines[startIndex].trimmingCharacters(in: .whitespaces)
-        let svcName = firstLine
+        let cleanFirst = (firstLine.components(separatedBy: "//").first ?? firstLine).trimmingCharacters(in: .whitespaces)
+        let svcName = cleanFirst
             .replacingOccurrences(of: "service", with: "")
             .replacingOccurrences(of: "{", with: "")
             .trimmingCharacters(in: .whitespaces)
@@ -195,6 +211,14 @@ public final class LocalProtoParser {
         var options: [ProtoOption] = []
 
         var i = startIndex + 1
+        if !firstLine.contains("{") {
+            while i < lines.count {
+                let l = lines[i].trimmingCharacters(in: .whitespaces)
+                i += 1
+                if l.contains("{") { break }
+            }
+        }
+
         var methodComment = ""
 
         while i < lines.count {
@@ -202,6 +226,11 @@ public final class LocalProtoParser {
             if line.hasPrefix("//") {
                 let c = line.dropFirst(2).trimmingCharacters(in: .whitespaces)
                 methodComment = methodComment.isEmpty ? c : "\(methodComment)\n\(c)"
+                i += 1
+                continue
+            }
+
+            if line.isEmpty || line == "{" {
                 i += 1
                 continue
             }
@@ -218,7 +247,7 @@ public final class LocalProtoParser {
             }
 
             // option (service_level)
-            if line.hasPrefix("option ") {
+            if line.hasPrefix("option ") || line.starts(with: "option\t") {
                 if let opt = parseOption(from: line) {
                     options.append(opt)
                 }
@@ -227,9 +256,11 @@ public final class LocalProtoParser {
             }
 
             // rpc MethodName (InMsg) returns (OutMsg)
-            if line.hasPrefix("rpc ") {
+            if line.hasPrefix("rpc ") || line.starts(with: "rpc\t") {
                 let (method, newIndex) = parseMethod(lines: lines, startIndex: i, serviceFullName: fullName, leadingComment: methodComment)
-                methods.append(method)
+                if !method.name.isEmpty {
+                    methods.append(method)
+                }
                 i = newIndex
                 methodComment = ""
                 continue
@@ -252,12 +283,16 @@ public final class LocalProtoParser {
 
     private func parseMethod(lines: [String], startIndex: Int, serviceFullName: String, leadingComment: String) -> (ProtoMethodDescriptor, Int) {
         var rpcLine = lines[startIndex].trimmingCharacters(in: .whitespaces)
+        rpcLine = (rpcLine.components(separatedBy: "//").first ?? rpcLine).trimmingCharacters(in: .whitespaces)
         var i = startIndex
 
         // 收集多行 rpc 签名直至出现 ; 或 {
         while !rpcLine.contains(";") && !rpcLine.contains("{") && i + 1 < lines.count {
             i += 1
-            rpcLine += " " + lines[i].trimmingCharacters(in: .whitespaces)
+            let nextLine = lines[i].trimmingCharacters(in: .whitespaces)
+            if nextLine.hasPrefix("//") { continue }
+            let cleanNext = (nextLine.components(separatedBy: "//").first ?? nextLine).trimmingCharacters(in: .whitespaces)
+            rpcLine += " " + cleanNext
         }
 
         var methodName = ""
@@ -267,7 +302,7 @@ public final class LocalProtoParser {
         var serverStream = false
 
         // 匹配: rpc MethodName ( [stream] Input ) returns ( [stream] Output )
-        let pattern = #"rpc\s+([a-zA-Z0-9_]+)\s*\(\s*(stream\s+)?([a-zA-Z0-9_\.]+)\s*\)\s*returns\s*\(\s*(stream\s+)?([a-zA-Z0-9_\.]+)\s*\)"#
+        let pattern = #"rpc\s+([a-zA-Z0-9_]+)\s*\(\s*(stream\s+)?([a-zA-Z0-9_\.]*)\s*\)\s*returns\s*\(\s*(stream\s+)?([a-zA-Z0-9_\.]*)\s*\)"#
         if let regex = try? NSRegularExpression(pattern: pattern),
            let match = regex.firstMatch(in: rpcLine, range: NSRange(location: 0, length: rpcLine.utf16.count)) {
             let ns = rpcLine as NSString
@@ -283,36 +318,55 @@ public final class LocalProtoParser {
 
         // 如果包含大括号，解析其中的 RPC Option / Extension (例如 google.api.http, require_auth)
         if rpcLine.contains("{") {
-            i += 1
-            var multiLineOptionBuffer = ""
-            var insideBraces = 1
-
-            while i < lines.count && insideBraces > 0 {
-                let innerLine = lines[i].trimmingCharacters(in: .whitespaces)
-                if innerLine.contains("{") { insideBraces += 1 }
-                if innerLine.contains("}") { insideBraces -= 1 }
-
-                if insideBraces == 0 {
-                    if !multiLineOptionBuffer.isEmpty {
-                        if let opt = parseOption(from: multiLineOptionBuffer) {
+            let openBraces = rpcLine.filter { $0 == "{" }.count
+            let closeBraces = rpcLine.filter { $0 == "}" }.count
+            if openBraces > 0 && openBraces == closeBraces {
+                // 单行完成的 RPC 块，如: rpc SayHello(...) returns (...) {}
+                if let optContent = rpcLine.components(separatedBy: "{").last?.components(separatedBy: "}").first {
+                    let trimmed = optContent.trimmingCharacters(in: .whitespaces)
+                    if trimmed.hasPrefix("option ") {
+                        if let opt = parseOption(from: trimmed) {
                             options.append(opt)
                         }
                     }
-                    i += 1
-                    break
                 }
-
-                if innerLine.hasPrefix("option ") || !multiLineOptionBuffer.isEmpty {
-                    multiLineOptionBuffer += (multiLineOptionBuffer.isEmpty ? "" : " ") + innerLine
-                    if innerLine.hasSuffix(";") {
-                        if let opt = parseOption(from: multiLineOptionBuffer) {
-                            options.append(opt)
-                        }
-                        multiLineOptionBuffer = ""
-                    }
-                }
-
                 i += 1
+            } else {
+                i += 1
+                var multiLineOptionBuffer = ""
+                var insideBraces = max(1, openBraces - closeBraces)
+
+                while i < lines.count && insideBraces > 0 {
+                    let rawInner = lines[i].trimmingCharacters(in: .whitespaces)
+                    let innerLine = (rawInner.components(separatedBy: "//").first ?? rawInner).trimmingCharacters(in: .whitespaces)
+
+                    for ch in innerLine {
+                        if ch == "{" { insideBraces += 1 }
+                        else if ch == "}" { insideBraces -= 1 }
+                    }
+
+                    if insideBraces == 0 {
+                        if !multiLineOptionBuffer.isEmpty {
+                            if let opt = parseOption(from: multiLineOptionBuffer) {
+                                options.append(opt)
+                            }
+                        }
+                        i += 1
+                        break
+                    }
+
+                    if innerLine.hasPrefix("option ") || !multiLineOptionBuffer.isEmpty {
+                        multiLineOptionBuffer += (multiLineOptionBuffer.isEmpty ? "" : " ") + innerLine
+                        if innerLine.hasSuffix(";") {
+                            if let opt = parseOption(from: multiLineOptionBuffer) {
+                                options.append(opt)
+                            }
+                            multiLineOptionBuffer = ""
+                        }
+                    }
+
+                    i += 1
+                }
             }
         } else {
             i += 1
@@ -338,7 +392,8 @@ public final class LocalProtoParser {
 
     private func parseMessage(lines: [String], startIndex: Int, packageName: String) -> (ProtoMessageDescriptor, Int) {
         let firstLine = lines[startIndex].trimmingCharacters(in: .whitespaces)
-        let name = firstLine
+        let cleanFirst = (firstLine.components(separatedBy: "//").first ?? firstLine).trimmingCharacters(in: .whitespaces)
+        let name = cleanFirst
             .replacingOccurrences(of: "message", with: "")
             .replacingOccurrences(of: "{", with: "")
             .trimmingCharacters(in: .whitespaces)
@@ -348,13 +403,21 @@ public final class LocalProtoParser {
         var options: [ProtoOption] = []
 
         var i = startIndex + 1
+        if !firstLine.contains("{") {
+            while i < lines.count {
+                let l = lines[i].trimmingCharacters(in: .whitespaces)
+                i += 1
+                if l.contains("{") { break }
+            }
+        }
+
         while i < lines.count {
             let line = lines[i].trimmingCharacters(in: .whitespaces)
             if line.contains("}") && !line.contains("{") {
                 return (ProtoMessageDescriptor(name: name, fullName: fullName, fields: fields, options: options), i + 1)
             }
 
-            if line.hasPrefix("option ") {
+            if line.hasPrefix("option ") || line.starts(with: "option\t") {
                 if let opt = parseOption(from: line) {
                     options.append(opt)
                 }
@@ -379,17 +442,25 @@ public final class LocalProtoParser {
 
     private func parseEnum(lines: [String], startIndex: Int) -> (ProtoEnumDescriptor, Int) {
         let firstLine = lines[startIndex].trimmingCharacters(in: .whitespaces)
-        let name = firstLine
+        let cleanFirst = (firstLine.components(separatedBy: "//").first ?? firstLine).trimmingCharacters(in: .whitespaces)
+        let name = cleanFirst
             .replacingOccurrences(of: "enum", with: "")
             .replacingOccurrences(of: "{", with: "")
             .trimmingCharacters(in: .whitespaces)
 
         var values: [String: Int] = [:]
         var i = startIndex + 1
+        if !firstLine.contains("{") {
+            while i < lines.count {
+                let l = lines[i].trimmingCharacters(in: .whitespaces)
+                i += 1
+                if l.contains("{") { break }
+            }
+        }
 
         while i < lines.count {
             let line = lines[i].trimmingCharacters(in: .whitespaces)
-            if line.contains("}") {
+            if line.contains("}") && !line.contains("{") {
                 return (ProtoEnumDescriptor(name: name, values: values), i + 1)
             }
 
