@@ -32,18 +32,10 @@ jobs:
         run: |
           swift test -v
 
-      - name: Build Native Pulsar.app
+      - name: Build & Package Pulsar.app (DMG & ZIP)
         run: |
           chmod +x ./scripts/build_app.sh
-          ./scripts/build_app.sh
-
-      - name: Package DMG and ZIP Installers
-        run: |
-          cd build
-          xattr -cr Pulsar.app 2>/dev/null || true
-          zip -r -y Pulsar-macOS-arm64.zip Pulsar.app
-          hdiutil create -volname "Pulsar" -srcfolder Pulsar.app -ov -format UDZO Pulsar-macOS-arm64.dmg
-          ls -lh
+          ./scripts/build_app.sh --package
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4

@@ -89,8 +89,37 @@ if [ "$1" = "--dmg" ] || [ "$1" = "--package" ] || [ -n "$PACKAGE" ]; then
     echo "==> Packaging DMG and ZIP installers..."
     cd "$PROJECT_DIR/build"
     rm -f "${APP_NAME}-macOS-arm64.zip" "${APP_NAME}-macOS-arm64.dmg"
+
+    # 1. 压缩 ZIP 便携包
     zip -r -y "${APP_NAME}-macOS-arm64.zip" "${APP_NAME}.app"
-    hdiutil create -volname "${APP_NAME}" -srcfolder "${APP_NAME}.app" -ov -format UDZO "${APP_NAME}-macOS-arm64.dmg"
+
+    # 2. 组装 DMG Staging 镜像目录 (包含拖拽安装快捷方式与辅助工具)
+    DMG_STAGING="$PROJECT_DIR/build/dmg_staging"
+    rm -rf "$DMG_STAGING"
+    mkdir -p "$DMG_STAGING"
+
+    # 拷贝已签名的 App
+    cp -R "${APP_NAME}.app" "$DMG_STAGING/"
+
+    # 创建 Applications 软链接快捷方式 (提示用户拖拽安装)
+    ln -s /Applications "$DMG_STAGING/Applications"
+
+    # 拷贝双击修复脚本与使用指引
+    if [ -f "$PROJECT_DIR/Resources/无法打开请双击修复.command" ]; then
+        cp "$PROJECT_DIR/Resources/无法打开请双击修复.command" "$DMG_STAGING/"
+        chmod +x "$DMG_STAGING/无法打开请双击修复.command"
+    fi
+    if [ -f "$PROJECT_DIR/Resources/安装与打开说明.txt" ]; then
+        cp "$PROJECT_DIR/Resources/安装与打开说明.txt" "$DMG_STAGING/"
+    fi
+
+    # 清除 staging 中可能的扩展属性
+    xattr -cr "$DMG_STAGING" 2>/dev/null || true
+
+    # 生成包含拖拽快捷方式的全新 DMG 镜像
+    hdiutil create -volname "${APP_NAME}" -srcfolder "$DMG_STAGING" -ov -format UDZO "${APP_NAME}-macOS-arm64.dmg"
+    rm -rf "$DMG_STAGING"
+
     echo "==> Package installers created in $PROJECT_DIR/build:"
     ls -lh "${APP_NAME}-macOS-arm64".*
 fi
