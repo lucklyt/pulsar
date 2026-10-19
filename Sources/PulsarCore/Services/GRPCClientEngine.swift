@@ -465,6 +465,23 @@ public final class GRPCClientEngine {
         }
     }
 
+    private final class ThreadSafeOutputBuffer: @unchecked Sendable {
+        private var storage = ""
+        private let lock = NSLock()
+
+        func append(_ text: String) {
+            lock.lock()
+            defer { lock.unlock() }
+            storage.append(text)
+        }
+
+        var text: String {
+            lock.lock()
+            defer { lock.unlock() }
+            return storage
+        }
+    }
+
     private func runProcessWithStreamingOutput(
         executable: String,
         arguments: [String],
@@ -481,12 +498,12 @@ public final class GRPCClientEngine {
                 process.standardOutput = stdoutPipe
                 process.standardError = stderrPipe
 
-                var collectedStdout = ""
+                let buffer = ThreadSafeOutputBuffer()
 
                 stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
                     let data = handle.availableData
                     guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-                    collectedStdout.append(text)
+                    buffer.append(text)
                     for line in text.components(separatedBy: .newlines) {
                         let trimmed = line.trimmingCharacters(in: .whitespaces)
                         if !trimmed.isEmpty {
@@ -502,14 +519,14 @@ public final class GRPCClientEngine {
                     stdoutPipe.fileHandleForReading.readabilityHandler = nil
                     let remainingOut = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
                     if let text = String(data: remainingOut, encoding: .utf8) {
-                        collectedStdout.append(text)
+                        buffer.append(text)
                     }
 
                     let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
                     let stderrStr = String(data: stderrData, encoding: .utf8) ?? ""
 
                     continuation.resume(returning: ProcessRunResult(
-                        stdout: collectedStdout,
+                        stdout: buffer.text,
                         stderr: stderrStr,
                         exitCode: Int(process.terminationStatus)
                     ))
