@@ -9,7 +9,6 @@ public struct ServiceAutocompleteField: View {
     public var onSelectService: ((ProtoServiceDescriptor) -> Void)?
 
     @FocusState private var isFocused: Bool
-    @State private var showInlineSuggestions: Bool = false
 
     public init(
         serviceName: Binding<String>,
@@ -34,11 +33,6 @@ public struct ServiceAutocompleteField: View {
         }
     }
 
-    private var hasExactMatch: Bool {
-        let trimmed = serviceName.trimmingCharacters(in: .whitespaces)
-        return allServices.contains { $0.fullName == trimmed || $0.name == trimmed }
-    }
-
     public var body: some View {
         HStack(spacing: 4) {
             Image(systemName: "cube.fill")
@@ -55,9 +49,6 @@ public struct ServiceAutocompleteField: View {
                 .font(.system(size: 11, design: .monospaced))
                 .textFieldStyle(.plain)
                 .focused($isFocused)
-                .onChange(of: serviceName) { _, newValue in
-                    showInlineSuggestions = isFocused && !newValue.isEmpty && !hasExactMatch
-                }
 
             if !serviceName.isEmpty {
                 Button(action: {
@@ -74,7 +65,7 @@ public struct ServiceAutocompleteField: View {
 
             // 下拉选择菜单 (Menu)
             Menu {
-                // 1. 匹配的候选服务
+                // 1. 匹配的候选服务 (若当前有输入)
                 if !serviceName.isEmpty && !matchingServices.isEmpty {
                     Section("匹配服务 (\(matchingServices.count))") {
                         ForEach(matchingServices) { svc in
@@ -120,12 +111,16 @@ public struct ServiceAutocompleteField: View {
                     Text("暂无可用服务 (可在左侧导入 Proto)").disabled(true)
                 }
             } label: {
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 2)
-                    .padding(.vertical, 2)
-                    .contentShape(Rectangle())
+                HStack(spacing: 2) {
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 3)
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(4)
+                .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -139,95 +134,21 @@ public struct ServiceAutocompleteField: View {
             RoundedRectangle(cornerRadius: 5)
                 .stroke(isFocused ? Color.accentColor.opacity(0.6) : Color.gray.opacity(0.2), lineWidth: 1)
         )
-        // 浮层自动补全候选项
-        .overlay(alignment: .topLeading) {
-            if showInlineSuggestions && !matchingServices.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text("推荐服务匹配")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text("点击选取")
-                            .font(.system(size: 8))
-                            .foregroundColor(.secondary.opacity(0.8))
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.top, 4)
-
-                    Divider()
-
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 1) {
-                            ForEach(matchingServices.prefix(6)) { svc in
-                                Button(action: {
-                                    selectService(svc)
-                                    showInlineSuggestions = false
-                                }) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "cube.fill")
-                                            .font(.system(size: 9))
-                                            .foregroundColor(.blue)
-
-                                        VStack(alignment: .leading, spacing: 1) {
-                                            Text(svc.fullName)
-                                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                                .foregroundColor(.primary)
-
-                                            if !svc.comments.isEmpty {
-                                                Text(svc.comments.prefix(40))
-                                                    .font(.system(size: 9))
-                                                    .foregroundColor(.secondary)
-                                                    .lineLimit(1)
-                                            }
-                                        }
-
-                                        Spacer()
-
-                                        Text("\(svc.methods.count) 方法")
-                                            .font(.system(size: 9, weight: .semibold))
-                                            .padding(.horizontal, 5)
-                                            .padding(.vertical, 2)
-                                            .background(Color.blue.opacity(0.12))
-                                            .foregroundColor(.blue)
-                                            .cornerRadius(3)
-                                    }
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-                    .frame(maxHeight: 160)
-                }
-                .frame(width: 320)
-                .background(Color(NSColor.windowBackgroundColor))
-                .cornerRadius(6)
-                .shadow(color: Color.black.opacity(0.25), radius: 6, x: 0, y: 3)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                )
-                .offset(y: 30)
-                .zIndex(100)
-            }
-        }
     }
 
     private func selectService(_ svc: ProtoServiceDescriptor) {
         serviceName = svc.fullName
-        // 如果当前方法不存在于此服务中，清空；若该服务仅有 1 个方法，自动填充！
-        if !svc.methods.contains(where: { $0.name == methodName }) {
-            if svc.methods.count == 1, let single = svc.methods.first {
-                methodName = single.name
-            } else {
-                methodName = ""
+        if let onSelectService = onSelectService {
+            onSelectService(svc)
+        } else {
+            if !svc.methods.contains(where: { $0.name == methodName }) {
+                if svc.methods.count == 1, let single = svc.methods.first {
+                    methodName = single.name
+                } else {
+                    methodName = ""
+                }
             }
         }
-        showInlineSuggestions = false
-        onSelectService?(svc)
     }
 }
 
@@ -239,7 +160,6 @@ public struct MethodAutocompleteField: View {
     public var onSelectMethod: ((ProtoMethodDescriptor) -> Void)?
 
     @FocusState private var isFocused: Bool
-    @State private var showInlineSuggestions: Bool = false
 
     public init(
         serviceName: String,
@@ -281,11 +201,6 @@ public struct MethodAutocompleteField: View {
         }
     }
 
-    private var hasExactMatch: Bool {
-        let trimmed = methodName.trimmingCharacters(in: .whitespaces)
-        return availableMethods.contains { $0.name == trimmed }
-    }
-
     public var body: some View {
         HStack(spacing: 4) {
             Image(systemName: "function")
@@ -302,9 +217,6 @@ public struct MethodAutocompleteField: View {
                 .font(.system(size: 11, design: .monospaced))
                 .textFieldStyle(.plain)
                 .focused($isFocused)
-                .onChange(of: methodName) { _, newValue in
-                    showInlineSuggestions = isFocused && !newValue.isEmpty && !hasExactMatch && !availableMethods.isEmpty
-                }
 
             if !methodName.isEmpty {
                 Button(action: {
@@ -372,12 +284,16 @@ public struct MethodAutocompleteField: View {
                     }
                 }
             } label: {
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 2)
-                    .padding(.vertical, 2)
-                    .contentShape(Rectangle())
+                HStack(spacing: 2) {
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 3)
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(4)
+                .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -391,93 +307,10 @@ public struct MethodAutocompleteField: View {
             RoundedRectangle(cornerRadius: 5)
                 .stroke(isFocused ? Color.accentColor.opacity(0.6) : Color.gray.opacity(0.2), lineWidth: 1)
         )
-        // 浮层自动补全候选项
-        .overlay(alignment: .topLeading) {
-            if showInlineSuggestions && !matchingMethods.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text("推荐方法匹配")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text("点击选取")
-                            .font(.system(size: 8))
-                            .foregroundColor(.secondary.opacity(0.8))
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.top, 4)
-
-                    Divider()
-
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 1) {
-                            ForEach(matchingMethods.prefix(6)) { m in
-                                Button(action: {
-                                    selectMethod(m)
-                                    showInlineSuggestions = false
-                                }) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "function")
-                                            .font(.system(size: 9))
-                                            .foregroundColor(.green)
-
-                                        VStack(alignment: .leading, spacing: 1) {
-                                            Text(m.name)
-                                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                                .foregroundColor(.primary)
-
-                                            Text("(\(m.inputMessage.name)) -> \(m.outputMessage.name)")
-                                                .font(.system(size: 9))
-                                                .foregroundColor(.secondary)
-                                                .lineLimit(1)
-                                        }
-
-                                        Spacer()
-
-                                        Text(m.callType.shortTag)
-                                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                                            .padding(.horizontal, 5)
-                                            .padding(.vertical, 2)
-                                            .background(callTypeBadgeColor(m.callType).opacity(0.12))
-                                            .foregroundColor(callTypeBadgeColor(m.callType))
-                                            .cornerRadius(3)
-                                    }
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-                    .frame(maxHeight: 160)
-                }
-                .frame(width: 300)
-                .background(Color(NSColor.windowBackgroundColor))
-                .cornerRadius(6)
-                .shadow(color: Color.black.opacity(0.25), radius: 6, x: 0, y: 3)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                )
-                .offset(y: 30)
-                .zIndex(100)
-            }
-        }
     }
 
     private func selectMethod(_ m: ProtoMethodDescriptor) {
         methodName = m.name
-        showInlineSuggestions = false
         onSelectMethod?(m)
-    }
-
-    private func callTypeBadgeColor(_ type: GRPCCallType) -> Color {
-        switch type {
-        case .unary: return .blue
-        case .serverStreaming: return .purple
-        case .clientStreaming: return .orange
-        case .bidiStreaming: return .green
-        }
     }
 }

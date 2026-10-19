@@ -5,7 +5,6 @@ public struct RequestHeaderView: View {
     @Binding var request: RequestModel
     @ObservedObject var appState: AppState
 
-    @State private var isProtoMethodMenuPresented: Bool = false
     @State private var isCodeSnippetPresented: Bool = false
 
     public var body: some View {
@@ -226,73 +225,178 @@ public struct RequestHeaderView: View {
 
             HStack(spacing: 8) {
                 ServiceAutocompleteField(
-                    serviceName: Binding(
-                        get: { request.serviceName },
-                        set: {
-                            request.serviceName = $0
-                            appState.markDirty(id: request.id)
-                        }
-                    ),
-                    methodName: Binding(
-                        get: { request.methodName },
-                        set: {
-                            request.methodName = $0
-                            appState.markDirty(id: request.id)
-                        }
-                    ),
+                    serviceName: $request.serviceName,
+                    methodName: $request.methodName,
                     allServices: allServices,
                     historyServices: historyServices,
                     onSelectService: { svc in
-                        request.serviceName = svc.fullName
-                        if !svc.methods.contains(where: { $0.name == request.methodName }) {
-                            if svc.methods.count == 1, let single = svc.methods.first {
-                                request.methodName = single.name
-                                request.callType = single.callType
-                                if request.payload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || request.payload == "{}" {
-                                    if let inputMsg = ProtoRepository.shared.findMessage(by: single.inputMessage.name) {
-                                        request.payload = MockJSONGenerator.shared.generateMockJSON(for: inputMsg)
-                                    }
-                                }
-                                ProtoRepository.shared.applyExtensions(to: &request, method: single)
-                            } else {
-                                request.methodName = ""
-                            }
-                        }
-                        appState.markDirty(id: request.id)
+                        applyService(svc)
                     }
                 )
 
                 MethodAutocompleteField(
                     serviceName: request.serviceName,
-                    methodName: Binding(
-                        get: { request.methodName },
-                        set: {
-                            request.methodName = $0
-                            appState.markDirty(id: request.id)
-                        }
-                    ),
+                    methodName: $request.methodName,
                     allServices: allServices,
                     onSelectMethod: { m in
-                        request.serviceName = m.serviceName
-                        request.methodName = m.name
-                        request.callType = m.callType
-                        if request.payload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || request.payload == "{}" {
-                            if let inputMsg = ProtoRepository.shared.findMessage(by: m.inputMessage.name) {
-                                request.payload = MockJSONGenerator.shared.generateMockJSON(for: inputMsg)
-                            }
-                        }
-                        ProtoRepository.shared.applyExtensions(to: &request, method: m)
-                        appState.markDirty(id: request.id)
+                        applyMethod(m)
                     }
                 )
+            }
+
+            // 第四行：服务与方法实时智能推荐胶囊栏 (布局内自适应展开，绝不遮挡、绝不截断)
+            let currentSvc = request.serviceName.trimmingCharacters(in: .whitespaces)
+            let currentMtd = request.methodName.trimmingCharacters(in: .whitespaces)
+
+            let matchedService = allServices.first {
+                $0.fullName.lowercased() == currentSvc.lowercased() ||
+                $0.name.lowercased() == currentSvc.lowercased()
+            }
+
+            if matchedService == nil && !allServices.isEmpty {
+                let candidateServices = currentSvc.isEmpty ? allServices : allServices.filter {
+                    $0.fullName.lowercased().contains(currentSvc.lowercased()) ||
+                    $0.name.lowercased().contains(currentSvc.lowercased())
+                }
+                if !candidateServices.isEmpty {
+                    HStack(spacing: 6) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 9))
+                                .foregroundColor(.blue)
+                            Text(currentSvc.isEmpty ? "快速选服务:" : "匹配服务:")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.secondary)
+                        }
+
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(candidateServices.prefix(6)) { svc in
+                                    Button(action: {
+                                        applyService(svc)
+                                    }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "cube.fill")
+                                                .font(.system(size: 8))
+                                                .foregroundColor(.blue)
+                                            Text(svc.fullName)
+                                                .font(.system(size: 10, design: .monospaced))
+                                            Text("(\(svc.methods.count))")
+                                                .font(.system(size: 8))
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3)
+                                        .background(Color.blue.opacity(0.08))
+                                        .cornerRadius(4)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 4)
+                                                .stroke(Color.blue.opacity(0.2), lineWidth: 1)
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.vertical, 1)
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+            } else if let svc = matchedService {
+                let isMethodMatched = svc.methods.contains { $0.name == currentMtd }
+                if !isMethodMatched && !svc.methods.isEmpty {
+                    let candidateMethods = currentMtd.isEmpty ? svc.methods : svc.methods.filter {
+                        $0.name.lowercased().contains(currentMtd.lowercased())
+                    }
+                    if !candidateMethods.isEmpty {
+                        HStack(spacing: 6) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "bolt.fill")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.green)
+                                Text(currentMtd.isEmpty ? "选择「\(svc.name)」方法:" : "匹配方法:")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(.secondary)
+                            }
+
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    ForEach(candidateMethods) { m in
+                                        Button(action: {
+                                            applyMethod(m)
+                                        }) {
+                                            HStack(spacing: 4) {
+                                                Image(systemName: "function")
+                                                    .font(.system(size: 8))
+                                                    .foregroundColor(.green)
+                                                Text(m.name)
+                                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                                Text(m.callType.shortTag)
+                                                    .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                                                    .padding(.horizontal, 3)
+                                                    .padding(.vertical, 1)
+                                                    .background(callTypeBadgeColor(m.callType).opacity(0.15))
+                                                    .foregroundColor(callTypeBadgeColor(m.callType))
+                                                    .cornerRadius(2)
+                                            }
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 3)
+                                            .background(Color.green.opacity(0.08))
+                                            .cornerRadius(4)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 4)
+                                                    .stroke(Color.green.opacity(0.2), lineWidth: 1)
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .padding(.vertical, 1)
+                            }
+                        }
+                        .padding(.top, 2)
+                    }
+                }
             }
         }
         .padding(12)
         .background(Color(NSColor.windowBackgroundColor))
     }
 
+    private func applyService(_ svc: ProtoServiceDescriptor) {
+        request.serviceName = svc.fullName
+        if !svc.methods.contains(where: { $0.name == request.methodName }) {
+            if svc.methods.count == 1, let single = svc.methods.first {
+                applyMethod(single)
+                return
+            } else {
+                request.methodName = ""
+            }
+        }
+        appState.markDirty(id: request.id)
+    }
+
+    private func applyMethod(_ m: ProtoMethodDescriptor) {
+        if !m.serviceName.isEmpty {
+            request.serviceName = m.serviceName
+        }
+        request.methodName = m.name
+        request.callType = m.callType
+        if request.payload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || request.payload == "{}" {
+            if let inputMsg = ProtoRepository.shared.findMessage(by: m.inputMessage.name) {
+                request.payload = MockJSONGenerator.shared.generateMockJSON(for: inputMsg)
+            }
+        }
+        ProtoRepository.shared.applyExtensions(to: &request, method: m)
+        appState.markDirty(id: request.id)
+    }
+
     private var callTypeColor: Color {
-        switch request.callType {
+        callTypeBadgeColor(request.callType)
+    }
+
+    private func callTypeBadgeColor(_ type: GRPCCallType) -> Color {
+        switch type {
         case .unary: return .blue
         case .serverStreaming: return .purple
         case .clientStreaming: return .orange

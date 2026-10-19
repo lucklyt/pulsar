@@ -70,6 +70,28 @@ public final class AppState: ObservableObject {
         return nil
     }
 
+    /// 提供直接响应式双向绑定的活动请求，避免局部快照拷贝导致的写回失效
+    public func activeRequestBinding() -> Binding<RequestModel>? {
+        guard let targetId = activeTabId else { return nil }
+        guard activeRequest != nil else { return nil }
+        return Binding<RequestModel>(
+            get: { [weak self] in
+                guard let self = self else { return RequestModel() }
+                for col in self.workspace.collections {
+                    if let req = col.requests.first(where: { $0.id == targetId }) {
+                        return req
+                    }
+                }
+                return RequestModel()
+            },
+            set: { [weak self] updated in
+                guard let self = self else { return }
+                self.updateActiveRequest(updated)
+                self.markDirty(id: updated.id)
+            }
+        )
+    }
+
     public var activeResponse: RPCResponse? {
         guard let id = activeTabId else { return nil }
         return responses[id]

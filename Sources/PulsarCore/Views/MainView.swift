@@ -21,8 +21,8 @@ public struct MainView: View {
 
                 // 2. 主请求与响应区域
                 if let activeReq = appState.activeRequest {
-                    let requestBinding = Binding<RequestModel>(
-                        get: { activeReq },
+                    let requestBinding = appState.activeRequestBinding() ?? Binding<RequestModel>(
+                        get: { appState.activeRequest ?? activeReq },
                         set: { appState.updateActiveRequest($0) }
                     )
 

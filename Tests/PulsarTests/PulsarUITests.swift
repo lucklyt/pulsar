@@ -234,6 +234,17 @@ final class PulsarUITests: XCTestCase {
         methodHost.frame = NSRect(x: 0, y: 0, width: 300, height: 28)
         methodHost.layoutSubtreeIfNeeded()
         XCTAssertTrue(methodHost.fittingSize.width > 0)
+
+        // 验证服务未选择时实时建议胶囊栏 (Row 4) 展开与有效布局尺寸
+        var emptyReq = RequestModel(name: "Empty Req", address: "localhost:50051")
+        emptyReq.serviceName = ""
+        emptyReq.methodName = ""
+        let emptyBinding = Binding(get: { emptyReq }, set: { emptyReq = $0 })
+        let emptyHeaderView = RequestHeaderView(request: emptyBinding, appState: appState)
+        let emptyHeaderHost = NSHostingView(rootView: emptyHeaderView)
+        emptyHeaderHost.frame = NSRect(x: 0, y: 0, width: 850, height: 120)
+        emptyHeaderHost.layoutSubtreeIfNeeded()
+        XCTAssertTrue(emptyHeaderHost.fittingSize.height > 40)
     }
 
     // MARK: - 5. 请求编辑器 RequestEditorView 子选项卡与批量编辑渲染

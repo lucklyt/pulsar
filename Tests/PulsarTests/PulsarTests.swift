@@ -1754,6 +1754,36 @@ final class PulsarTests: XCTestCase {
         XCTAssertEqual(req.callType, GRPCCallType.unary)
         XCTAssertEqual(req.serviceName, orderSvc.fullName)
     }
+
+    // MARK: - 39. activeRequestBinding 双向实时响应与持久化同步测试
+
+    func testActiveRequestBindingTwoWayDataSync() {
+        let appState = AppState()
+        guard let reqId = appState.activeTabId else {
+            XCTFail("Should have active request")
+            return
+        }
+
+        guard let binding = appState.activeRequestBinding() else {
+            XCTFail("activeRequestBinding should not be nil")
+            return
+        }
+
+        // 验证通过 binding 写入 serviceName 与 methodName
+        binding.wrappedValue.serviceName = "helloworld.Greeter"
+        binding.wrappedValue.methodName = "SayHello"
+        binding.wrappedValue.callType = .unary
+
+        // 验证 AppState.activeRequest 与底层 workspace 数据立即同步更新，无快照延迟
+        XCTAssertEqual(appState.activeRequest?.serviceName, "helloworld.Greeter")
+        XCTAssertEqual(appState.activeRequest?.methodName, "SayHello")
+        XCTAssertEqual(appState.activeRequest?.callType, .unary)
+        XCTAssertTrue(appState.dirtyTabIds.contains(reqId))
+
+        // 验证 binding 读取到的值完全一致
+        XCTAssertEqual(binding.wrappedValue.serviceName, "helloworld.Greeter")
+        XCTAssertEqual(binding.wrappedValue.methodName, "SayHello")
+    }
 }
 
 // MARK: - Mock URLProtocol for Nacos HTTP 测试
