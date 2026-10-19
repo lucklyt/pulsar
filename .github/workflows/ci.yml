@@ -40,6 +40,7 @@ jobs:
       - name: Package DMG and ZIP Installers
         run: |
           cd build
+          xattr -cr Pulsar.app 2>/dev/null || true
           zip -r -y Pulsar-macOS-arm64.zip Pulsar.app
           hdiutil create -volname "Pulsar" -srcfolder Pulsar.app -ov -format UDZO Pulsar-macOS-arm64.dmg
           ls -lh

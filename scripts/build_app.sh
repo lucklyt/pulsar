@@ -8,7 +8,11 @@ if [ -z "$DEVELOPER_DIR" ] && [ -d "/Applications/Xcode.app/Contents/Developer" 
     export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
 fi
 
-VERSION="${VERSION:-2.0.0}"
+if [ -n "$GITHUB_REF_NAME" ]; then
+    VERSION="${GITHUB_REF_NAME#v}"
+else
+    VERSION="${VERSION:-2.0.1}"
+fi
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 
 echo "==> Building Pulsar v${VERSION} in release mode..."
@@ -71,6 +75,9 @@ cat <<EOF > "$CONTENTS_DIR/Info.plist"
 </dict>
 </plist>
 EOF
+
+# 清理可能存在的临时属性
+xattr -cr "$APP_BUNDLE" 2>/dev/null || true
 
 echo "==> Code signing ${APP_NAME}.app (Ad-Hoc with deep resource sealing)..."
 codesign --force --deep --sign - "$APP_BUNDLE"
