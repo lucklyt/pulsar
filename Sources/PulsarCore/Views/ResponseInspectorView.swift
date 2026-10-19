@@ -18,13 +18,12 @@ public struct ResponseInspectorView: View {
         case assertions = "断言测试"
         case diff = "快照对比"
         case stats = "统计指标"
-        case grpcurl = "CLI 导出"
 
         var id: String { rawValue }
     }
 
     private let primaryTabs: [ResponseTab] = [.body, .headers, .timeline]
-    private let secondaryTabs: [ResponseTab] = [.assertions, .diff, .stats, .grpcurl]
+    private let secondaryTabs: [ResponseTab] = [.assertions, .diff, .stats]
 
     private var visibleTabs: [ResponseTab] {
         if primaryTabs.contains(selectedTab) {
@@ -60,8 +59,6 @@ public struct ResponseInspectorView: View {
             return hasSnapshot ? "快照" : nil
         case .stats:
             return nil
-        case .grpcurl:
-            return "cURL"
         }
     }
 
@@ -107,7 +104,7 @@ public struct ResponseInspectorView: View {
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
-                    .help("更多响应观测 (断言结果、快照对比、统计指标、CLI 导出)")
+                    .help("更多响应观测 (断言结果、快照对比、统计指标)")
                 }
 
                 Spacer(minLength: 8)
@@ -135,8 +132,6 @@ public struct ResponseInspectorView: View {
                     headersTrailersView
                 case .stats:
                     statisticsView
-                case .grpcurl:
-                    grpcurlExportView
                 }
             }
             .padding(12)
@@ -758,52 +753,7 @@ public struct ResponseInspectorView: View {
         }
     }
 
-    // MARK: - 5. grpcurl Command
 
-    private var grpcurlExportView: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("终端复现指令 (grpcurl CLI):")
-                    .font(.system(size: 11, weight: .semibold))
-                Spacer()
-                Button(action: {
-                    if let req = currentRequest {
-                        let activeImportPaths = ProtoRepository.shared.importPaths.filter { $0.isEnabled }.map { $0.path }
-                        let cmd = GrpcurlExporter.shared.export(
-                            request: req,
-                            resolvedAddress: req.address,
-                            resolvedPayload: req.payload,
-                            importPaths: activeImportPaths
-                        )
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(cmd, forType: .string)
-                    }
-                }) {
-                    Label("复制命令", systemImage: "terminal")
-                        .font(.system(size: 10))
-                }
-                .buttonStyle(.borderedProminent)
-            }
-
-            if let req = currentRequest {
-                let activeImportPaths = ProtoRepository.shared.importPaths.filter { $0.isEnabled }.map { $0.path }
-                let cmd = GrpcurlExporter.shared.export(
-                    request: req,
-                    resolvedAddress: req.address,
-                    resolvedPayload: req.payload,
-                    importPaths: activeImportPaths
-                )
-                ScrollView {
-                    Text(cmd)
-                        .font(.system(size: 11, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(8)
-                }
-                .background(Color(NSColor.controlBackgroundColor))
-                .cornerRadius(6)
-            }
-        }
-    }
 
     // MARK: - 断言测试与响应变量结果面板 (Bruno Assertions & Extracted Vars)
 

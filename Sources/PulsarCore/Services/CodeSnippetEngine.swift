@@ -80,7 +80,10 @@ public final class CodeSnippetEngine {
             return GrpcurlExporter.shared.export(
                 request: request,
                 resolvedAddress: effectiveAddress,
-                resolvedPayload: effectivePayload
+                resolvedPayload: effectivePayload,
+                headers: effectiveHeaders,
+                auth: effectiveAuth,
+                tls: effectiveTLS
             )
         case .curl:
             return generateCurlSnippet(

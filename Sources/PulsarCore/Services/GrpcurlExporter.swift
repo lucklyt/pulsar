@@ -8,9 +8,16 @@ public final class GrpcurlExporter {
         request: RequestModel,
         resolvedAddress: String,
         resolvedPayload: String,
+        headers: [MetadataHeader]? = nil,
+        auth: AuthConfig? = nil,
+        tls: TLSConfig? = nil,
         importPaths: [String] = [],
         protoFile: String? = nil
     ) -> String {
+        let effTLS = tls ?? request.tls
+        let effHeaders = headers ?? request.metadata
+        let effAuth = auth ?? request.auth
+
         var args: [String] = ["grpcurl"]
 
         // 1. Import Paths 与 Proto 文件指定 (对应 protoc -I)
@@ -22,34 +29,34 @@ public final class GrpcurlExporter {
         }
 
         // 2. 安全配置
-        switch request.tls.mode {
+        switch effTLS.mode {
         case .plaintext, .inherit:
             args.append("-plaintext")
         case .tlsSystem:
-            if request.tls.insecureSkipVerify {
+            if effTLS.insecureSkipVerify {
                 args.append("-insecure")
             }
         case .tlsCustomCA:
-            if !request.tls.rootCAPath.isEmpty {
-                args.append("-cacert \"\(request.tls.rootCAPath)\"")
+            if !effTLS.rootCAPath.isEmpty {
+                args.append("-cacert \"\(effTLS.rootCAPath)\"")
             }
-            if request.tls.insecureSkipVerify {
+            if effTLS.insecureSkipVerify {
                 args.append("-insecure")
             }
         case .mtls:
-            if !request.tls.rootCAPath.isEmpty {
-                args.append("-cacert \"\(request.tls.rootCAPath)\"")
+            if !effTLS.rootCAPath.isEmpty {
+                args.append("-cacert \"\(effTLS.rootCAPath)\"")
             }
-            if !request.tls.clientCertPath.isEmpty {
-                args.append("-cert \"\(request.tls.clientCertPath)\"")
+            if !effTLS.clientCertPath.isEmpty {
+                args.append("-cert \"\(effTLS.clientCertPath)\"")
             }
-            if !request.tls.clientKeyPath.isEmpty {
-                args.append("-key \"\(request.tls.clientKeyPath)\"")
+            if !effTLS.clientKeyPath.isEmpty {
+                args.append("-key \"\(effTLS.clientKeyPath)\"")
             }
         }
 
-        if !request.tls.serverNameOverride.isEmpty {
-            args.append("-authority \"\(request.tls.serverNameOverride)\"")
+        if !effTLS.serverNameOverride.isEmpty {
+            args.append("-authority \"\(effTLS.serverNameOverride)\"")
         }
 
         // 2. 超时配置
@@ -58,24 +65,24 @@ public final class GrpcurlExporter {
         }
 
         // 3. Metadata 请求头
-        for header in request.metadata where header.isEnabled && !header.key.isEmpty {
+        for header in effHeaders where header.isEnabled && !header.key.isEmpty {
             let escapedVal = header.value.replacingOccurrences(of: "\"", with: "\\\"")
             args.append("-H \"\(header.key): \(escapedVal)\"")
         }
 
         // 4. 身份验证
-        switch request.auth.type {
+        switch effAuth.type {
         case .bearer:
-            if !request.auth.bearerToken.isEmpty {
-                args.append("-H \"authorization: Bearer \(request.auth.bearerToken)\"")
+            if !effAuth.bearerToken.isEmpty {
+                args.append("-H \"authorization: Bearer \(effAuth.bearerToken)\"")
             }
         case .apiKey:
-            if !request.auth.apiKeyName.isEmpty && !request.auth.apiKeyValue.isEmpty {
-                args.append("-H \"\(request.auth.apiKeyName): \(request.auth.apiKeyValue)\"")
+            if !effAuth.apiKeyName.isEmpty && !effAuth.apiKeyValue.isEmpty {
+                args.append("-H \"\(effAuth.apiKeyName): \(effAuth.apiKeyValue)\"")
             }
         case .basic:
-            if !request.auth.username.isEmpty {
-                let combo = "\(request.auth.username):\(request.auth.password)"
+            if !effAuth.username.isEmpty {
+                let combo = "\(effAuth.username):\(effAuth.password)"
                 let base64 = Data(combo.utf8).base64EncodedString()
                 args.append("-H \"authorization: Basic \(base64)\"")
             }

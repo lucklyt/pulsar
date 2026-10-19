@@ -1876,6 +1876,144 @@ final class PulsarTests: XCTestCase {
         XCTAssertNotEqual(response.statusCode, 0)
         XCTAssertTrue(response.statusCode == 14 || response.statusCode == 4 || response.statusCode == 2)
     }
+
+    // MARK: - 35. grpcurl 代码生成环境变量解析验证
+    func testGrpcurlExportWithResolvedVariables() {
+        let engine = CodeSnippetEngine.shared
+        let req = RequestModel(
+            name: "Variable Interpolation Test",
+            address: "{{grpc_host}}:{{grpc_port}}",
+            serviceName: "{{service_name}}",
+            methodName: "GetUser",
+            callType: .unary,
+            payload: "{\"token\": \"{{jwt_token}}\"}",
+            metadata: [
+                MetadataHeader(key: "authorization", value: "Bearer {{jwt_token}}"),
+                MetadataHeader(key: "x-env", value: "{{env_name}}")
+            ],
+            auth: AuthConfig(type: .bearer, bearerToken: "{{jwt_token}}"),
+            tls: TLSConfig(mode: .plaintext)
+        )
+
+        // 模拟变量已在 CodeSnippetView 中解析后的 effective 状态
+        let snippet = engine.generateSnippet(
+            language: .grpcurl,
+            request: req,
+            effectiveAddress: "grpc.tigerbrokers.net:10080",
+            effectivePayload: "{\"token\": \"token_val_123\"}",
+            effectiveHeaders: [
+                MetadataHeader(key: "authorization", value: "Bearer token_val_123"),
+                MetadataHeader(key: "x-env", value: "production")
+            ],
+            effectiveAuth: AuthConfig(type: .bearer, bearerToken: "token_val_123"),
+            effectiveTLS: TLSConfig(mode: .plaintext)
+        )
+
+        XCTAssertTrue(snippet.contains("grpcurl"))
+        XCTAssertTrue(snippet.contains("grpc.tigerbrokers.net:10080"))
+        XCTAssertTrue(snippet.contains("authorization: Bearer token_val_123"))
+        XCTAssertTrue(snippet.contains("x-env: production"))
+        XCTAssertTrue(snippet.contains("token_val_123"))
+        // 关键断言：绝对不能残留未解析的 {{ 模板
+        XCTAssertFalse(snippet.contains("{{jwt_token}}"))
+        XCTAssertFalse(snippet.contains("{{grpc_host}}"))
+        XCTAssertFalse(snippet.contains("{{env_name}}"))
+    }
+
+    // MARK: - 36. 键入 {{ 时未闭合触发词识别与变量补全算法测试
+    func testVariableTriggerDetectionAndCompletion() {
+        // 1. 无 {{ 状态
+        XCTAssertNil(detectOpenVariableTrigger(in: "http://127.0.0.1:8080/api"))
+
+        // 2. 已闭合状态 {{var}}
+        XCTAssertNil(detectOpenVariableTrigger(in: "http://{{host}}:8080/api"))
+
+        // 3. 刚输入 {{ 状态 (空 query)
+        var text1 = "http://" + "{{"
+        let trigger1 = detectOpenVariableTrigger(in: text1)
+        XCTAssertNotNil(trigger1)
+        XCTAssertEqual(trigger1?.query, "")
+
+        // 执行补全
+        completeVariable(in: &text1, with: "grpc_host")
+        XCTAssertEqual(text1, "http://{{grpc_host}}")
+
+        // 4. 输入了部分前缀 {{tok
+        var text2 = "authorization: Bearer {{" + "tok"
+        let trigger2 = detectOpenVariableTrigger(in: text2)
+        XCTAssertNotNil(trigger2)
+        XCTAssertEqual(trigger2?.query, "tok")
+
+        completeVariable(in: &text2, with: "jwt_token")
+        XCTAssertEqual(text2, "authorization: Bearer {{jwt_token}}")
+
+        // 5. 多个变量时，只对最后一个未闭合的 {{ 触发
+        var text3 = "http://{{host}}:{{por"
+        let trigger3 = detectOpenVariableTrigger(in: text3)
+        XCTAssertNotNil(trigger3)
+        XCTAssertEqual(trigger3?.query, "por")
+
+        completeVariable(in: &text3, with: "grpc_port")
+        XCTAssertEqual(text3, "http://{{host}}:{{grpc_port}}")
+    }
+
+    // MARK: - 37. 变量推荐候选项检索与过滤测试
+    func testVariableSuggestionsFiltering() {
+        let appState = AppState()
+        var env = EnvironmentModel(name: "TestEnv")
+        env.variables = [
+            VariableItem(key: "grpc_host", value: "10.0.0.1"),
+            VariableItem(key: "grpc_port", value: "10080"),
+            VariableItem(key: "secret_token", value: "abc", isSecret: true)
+        ]
+        appState.workspace.environments = [env]
+        appState.workspace.activeEnvironmentId = env.id
+        appState.workspace.globalVariables = [
+            VariableItem(key: "global_trace_id", value: "tid-999")
+        ]
+
+        // 检索 "grpc" 过滤候选项
+        let suggestions = getVariableSuggestions(query: "grpc", appState: appState)
+        let keys = suggestions.map { $0.key }
+        XCTAssertTrue(keys.contains("grpc_host"))
+        XCTAssertTrue(keys.contains("grpc_port"))
+        XCTAssertFalse(keys.contains("secret_token"))
+
+        // 检索内置函数 "$uuid"
+        let uuidSug = getVariableSuggestions(query: "uuid", appState: appState)
+        XCTAssertTrue(uuidSug.contains(where: { $0.key == "$uuid" }))
+    }
+
+    // MARK: - 38. 侧边栏集合、文件夹与请求选中交互状态追踪测试
+    func testAppStateSidebarSelectionTracking() {
+        let appState = AppState()
+        let colId = UUID()
+        let folderId = UUID()
+        let reqId = UUID()
+
+        let folder = FolderModel(id: folderId, name: "Order Folder", collectionId: colId)
+        let req = RequestModel(id: reqId, name: "CreateOrder", folderId: folderId)
+        let col = CollectionModel(id: colId, name: "Order Collection", folders: [folder], requests: [req])
+        appState.workspace.collections = [col]
+
+        // 1. 选中集合
+        appState.selectCollection(colId)
+        XCTAssertEqual(appState.selectedCollectionId, colId)
+        XCTAssertNil(appState.selectedFolderId)
+        XCTAssertTrue(appState.isCollectionExpanded(colId))
+
+        // 2. 选中文件夹
+        appState.selectFolder(folderId, in: colId)
+        XCTAssertEqual(appState.selectedCollectionId, colId)
+        XCTAssertEqual(appState.selectedFolderId, folderId)
+        XCTAssertTrue(appState.isFolderExpanded(folderId))
+
+        // 3. 打开请求时自动同步选中对应的父集合与文件夹
+        appState.openTab(for: req)
+        XCTAssertEqual(appState.activeTabId, reqId)
+        XCTAssertEqual(appState.selectedCollectionId, colId)
+        XCTAssertEqual(appState.selectedFolderId, folderId)
+    }
 }
 
 

@@ -94,11 +94,30 @@ public struct HeaderValueAutocompleteField: View {
         return HeaderCatalog.sharedHeaders.first { $0.name.lowercased() == clean }
     }
 
+    @FocusState private var isFocused: Bool
+    @State private var isDismissed: Bool = false
+
+    private var openTrigger: OpenVariableTrigger? {
+        detectOpenVariableTrigger(in: value)
+    }
+
+    private var suggestions: [VariableSuggestion] {
+        guard let trigger = openTrigger else { return [] }
+        return getVariableSuggestions(query: trigger.query, appState: appState)
+    }
+
     public var body: some View {
         HStack(spacing: 2) {
-            TextField("header value", text: $value)
-                .font(.system(size: 11, design: .monospaced))
-                .textFieldStyle(.plain)
+            TextField("header value", text: Binding(
+                get: { value },
+                set: {
+                    value = $0
+                    isDismissed = false
+                }
+            ))
+            .font(.system(size: 11, design: .monospaced))
+            .textFieldStyle(.plain)
+            .focused($isFocused)
 
             // 预置值与变量快捷菜单
             Menu {
@@ -149,7 +168,7 @@ public struct HeaderValueAutocompleteField: View {
             } label: {
                 Image(systemName: "curlybraces")
                     .font(.system(size: 9))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(openTrigger != nil ? .purple : .secondary)
                     .padding(2)
             }
             .menuStyle(.borderlessButton)
@@ -162,15 +181,102 @@ public struct HeaderValueAutocompleteField: View {
         .cornerRadius(5)
         .overlay(
             RoundedRectangle(cornerRadius: 5)
-                .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                .stroke(openTrigger != nil ? Color.purple.opacity(0.5) : Color.gray.opacity(0.2), lineWidth: 1)
         )
+        // 输入 {{ 时自动弹窗补全浮层
+        .overlay(alignment: .topLeading) {
+            if isFocused && openTrigger != nil && !isDismissed && !suggestions.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Image(systemName: "curlybraces")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.purple)
+                        Text("点击补全变量 (匹配 \(suggestions.count) 项):")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button(action: { isDismissed = true }) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.top, 6)
+                    .padding(.bottom, 2)
+
+                    Divider()
+
+                    ScrollView {
+                        VStack(spacing: 1) {
+                            ForEach(suggestions.prefix(8)) { sug in
+                                Button(action: {
+                                    completeVariable(in: &value, with: sug.key)
+                                    isDismissed = true
+                                }) {
+                                    HStack(spacing: 6) {
+                                        Text("{{\(sug.key)}}")
+                                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                            .foregroundColor(.purple)
+
+                                        if !sug.value.isEmpty {
+                                            Text("= \(sug.value)")
+                                                .font(.system(size: 10, design: .monospaced))
+                                                .foregroundColor(.secondary)
+                                                .lineLimit(1)
+                                        }
+
+                                        Spacer()
+
+                                        Text(sug.source)
+                                            .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                                            .padding(.horizontal, 4)
+                                            .padding(.vertical, 1)
+                                            .background(sourceColor(sug.source).opacity(0.12))
+                                            .foregroundColor(sourceColor(sug.source))
+                                            .cornerRadius(3)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 180)
+                }
+                .frame(width: 300)
+                .background(Color(NSColor.windowBackgroundColor))
+                .cornerRadius(6)
+                .shadow(color: Color.black.opacity(0.22), radius: 6, x: 0, y: 3)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.purple.opacity(0.35), lineWidth: 1)
+                )
+                .offset(y: 26)
+                .zIndex(1000)
+            }
+        }
     }
 
     private func insertSnippet(_ snippet: String) {
-        if value.isEmpty {
+        if let trigger = openTrigger {
+            value.replaceSubrange(trigger.range, with: snippet)
+        } else if value.isEmpty {
             value = snippet
         } else {
             value += snippet
+        }
+        isDismissed = true
+    }
+
+    private func sourceColor(_ source: String) -> Color {
+        switch source {
+        case "ENV": return .green
+        case "GLOBAL": return .blue
+        default: return .purple
         }
     }
 }

@@ -11,7 +11,7 @@ fi
 if [ -n "$GITHUB_REF_NAME" ]; then
     VERSION="${GITHUB_REF_NAME#v}"
 else
-    VERSION="${VERSION:-2.0.8}"
+    VERSION="${VERSION:-2.0.9}"
 fi
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 

@@ -116,15 +116,18 @@ public struct RequestHeaderView: View {
                             .foregroundColor(.secondary)
                             .font(.system(size: 11))
 
-                        TextField("gRPC 目标地址 (如 {{grpc_host}}:{{grpc_port}} 或 nacos://...)", text: Binding(
-                            get: { request.address },
-                            set: {
-                                request.address = $0
-                                appState.markDirty(id: request.id)
-                            }
-                        ))
-                        .font(.system(size: 12, design: .monospaced))
-                        .textFieldStyle(.plain)
+                        VariableAutocompleteTextField(
+                            "gRPC 目标地址 (如 {{grpc_host}}:{{grpc_port}} 或 nacos://...)",
+                            text: Binding(
+                                get: { request.address },
+                                set: {
+                                    request.address = $0
+                                    appState.markDirty(id: request.id)
+                                }
+                            ),
+                            appState: appState,
+                            font: .system(size: 12, design: .monospaced)
+                        )
 
                         if request.address.contains("{{") {
                             let unresolved = EnvironmentEngine.shared.findUnresolvedVariables(
@@ -217,6 +220,21 @@ public struct RequestHeaderView: View {
                     .keyboardShortcut(.return, modifiers: [.command])
                     .help("发送 gRPC 请求 (⌘ + Return)")
                 }
+            }
+
+            // 地址栏输入 {{ 时的快速补全胶囊栏
+            if let varTrigger = detectOpenVariableTrigger(in: request.address) {
+                VariableSuggestionBarView(
+                    query: varTrigger.query,
+                    text: Binding(
+                        get: { request.address },
+                        set: {
+                            request.address = $0
+                            appState.markDirty(id: request.id)
+                        }
+                    ),
+                    appState: appState
+                )
             }
 
             // 第三行：Service 与 Method 智能选择与自动补全输入栏 (专属过滤与联动)

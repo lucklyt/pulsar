@@ -34,6 +34,10 @@ public final class AppState: ObservableObject {
     @Published public var expandedCollectionIds: Set<UUID> = []
     @Published public var expandedFolderIds: Set<UUID> = []
 
+    // 侧边栏当前选中的集合与文件夹 (用于高亮交互反馈)
+    @Published public var selectedCollectionId: UUID? = nil
+    @Published public var selectedFolderId: UUID? = nil
+
     private let storage: StorageManager
 
     public init(storage: StorageManager = .shared) {
@@ -47,9 +51,11 @@ public final class AppState: ObservableObject {
         self.expandedFolderIds = Set(loadedWorkspace.collections.flatMap { $0.folders.map { $0.id } })
 
         // 默认打开首个集合的首个请求
-        if let firstReq = loadedWorkspace.collections.first?.requests.first {
+        if let firstCol = loadedWorkspace.collections.first, let firstReq = firstCol.requests.first {
             self.openTabIds = [firstReq.id]
             self.activeTabId = firstReq.id
+            self.selectedCollectionId = firstCol.id
+            self.selectedFolderId = firstReq.folderId
         }
     }
 
@@ -145,6 +151,34 @@ public final class AppState: ObservableObject {
             openTabIds.append(request.id)
         }
         activeTabId = request.id
+
+        // 同步选中集合与文件夹
+        for col in workspace.collections {
+            if col.requests.contains(where: { $0.id == request.id }) {
+                selectedCollectionId = col.id
+                selectedFolderId = request.folderId
+                break
+            }
+        }
+    }
+
+    public func selectCollection(_ id: UUID) {
+        selectedCollectionId = id
+        selectedFolderId = nil
+        if !expandedCollectionIds.contains(id) {
+            expandedCollectionIds.insert(id)
+        }
+    }
+
+    public func selectFolder(_ folderId: UUID, in collectionId: UUID) {
+        selectedCollectionId = collectionId
+        selectedFolderId = folderId
+        if !expandedFolderIds.contains(folderId) {
+            expandedFolderIds.insert(folderId)
+        }
+        if !expandedCollectionIds.contains(collectionId) {
+            expandedCollectionIds.insert(collectionId)
+        }
     }
 
     public func closeTab(id: UUID) {

@@ -113,6 +113,10 @@ public struct SidebarView: View {
                                     FolderRowHeaderView(
                                         folder: folder,
                                         requestCount: folderRequests.count,
+                                        isSelected: appState.selectedFolderId == folder.id,
+                                        onSelect: {
+                                            appState.selectFolder(folder.id, in: collection.id)
+                                        },
                                         onNewRequest: {
                                             appState.createNewRequest(in: collection.id, folderId: folder.id)
                                         },
@@ -162,6 +166,10 @@ public struct SidebarView: View {
                             CollectionRowHeaderView(
                                 collection: collection,
                                 totalCount: collection.requests.count,
+                                isSelected: appState.selectedCollectionId == collection.id && appState.selectedFolderId == nil,
+                                onSelect: {
+                                    appState.selectCollection(collection.id)
+                                },
                                 onNewRequest: {
                                     appState.createNewRequest(in: collection.id)
                                 },
@@ -374,10 +382,12 @@ public struct SidebarView: View {
     }
 }
 
-/// Collection 栏行标头：支持 + 展开菜单（新建请求 / 新建文件夹）与上下文菜单
+/// Collection 栏行标头：支持 + 展开菜单（新建请求 / 新建文件夹）、选中高亮与悬浮交互反馈
 struct CollectionRowHeaderView: View {
     let collection: CollectionModel
     let totalCount: Int
+    let isSelected: Bool
+    let onSelect: () -> Void
     let onNewRequest: () -> Void
     let onNewFolder: () -> Void
     let onRename: () -> Void
@@ -386,6 +396,8 @@ struct CollectionRowHeaderView: View {
     let onRunCollection: () -> Void
     let onDelete: () -> Void
 
+    @State private var isHovered: Bool = false
+
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "folder.fill")
@@ -393,7 +405,8 @@ struct CollectionRowHeaderView: View {
                 .font(.system(size: 12))
 
             Text(collection.name)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 12, weight: isSelected ? .bold : .semibold))
+                .foregroundColor(.primary)
                 .lineLimit(1)
 
             Spacer()
@@ -426,7 +439,7 @@ struct CollectionRowHeaderView: View {
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(isHovered || isSelected ? .primary : .secondary)
                     .padding(3)
                     .contentShape(Rectangle())
             }
@@ -435,8 +448,30 @@ struct CollectionRowHeaderView: View {
             .help("新建请求或文件夹")
 
             Text("\(totalCount)")
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
+                .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                .foregroundColor(isSelected ? .primary : .secondary)
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? Color.accentColor.opacity(0.18) : (isHovered ? Color.gray.opacity(0.12) : Color.clear))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isSelected ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1)
+        )
+        .overlay(alignment: .leading) {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.accentColor)
+                    .frame(width: 3, height: 16)
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+        .onTapGesture {
+            onSelect()
         }
         .contextMenu {
             Button(action: onNewRequest) {
@@ -466,24 +501,29 @@ struct CollectionRowHeaderView: View {
     }
 }
 
-/// Folder 栏行标头：展示文件夹图标、数量、在文件夹内新建请求与右键菜单
+/// Folder 栏行标头：展示文件夹图标、数量、在文件夹内新建请求、选中高亮与悬浮交互反馈
 struct FolderRowHeaderView: View {
     let folder: FolderModel
     let requestCount: Int
+    let isSelected: Bool
+    let onSelect: () -> Void
     let onNewRequest: () -> Void
     let onRename: () -> Void
     let onOpenSettings: () -> Void
     let onRunFolder: () -> Void
     let onDelete: () -> Void
 
+    @State private var isHovered: Bool = false
+
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "folder")
-                .foregroundColor(.secondary)
+            Image(systemName: isSelected ? "folder.fill" : "folder")
+                .foregroundColor(isSelected ? .accentColor : .secondary)
                 .font(.system(size: 11))
 
             Text(folder.name)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 11, weight: isSelected ? .bold : .medium))
+                .foregroundColor(.primary)
                 .lineLimit(1)
 
             Spacer()
@@ -492,7 +532,7 @@ struct FolderRowHeaderView: View {
             Button(action: onNewRequest) {
                 Image(systemName: "plus")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(isHovered || isSelected ? .primary : .secondary)
                     .padding(2)
                     .contentShape(Rectangle())
             }
@@ -500,8 +540,30 @@ struct FolderRowHeaderView: View {
             .help("在此文件夹下新建请求")
 
             Text("\(requestCount)")
-                .font(.system(size: 9))
-                .foregroundColor(.secondary)
+                .font(.system(size: 9, weight: isSelected ? .semibold : .regular))
+                .foregroundColor(isSelected ? .primary : .secondary)
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? Color.accentColor.opacity(0.16) : (isHovered ? Color.gray.opacity(0.12) : Color.clear))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isSelected ? Color.accentColor.opacity(0.35) : Color.clear, lineWidth: 1)
+        )
+        .overlay(alignment: .leading) {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.accentColor)
+                    .frame(width: 3, height: 14)
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+        .onTapGesture {
+            onSelect()
         }
         .contextMenu {
             Button(action: onNewRequest) {
@@ -525,7 +587,7 @@ struct FolderRowHeaderView: View {
     }
 }
 
-/// Bruno 风格请求项列表行 (带脏标记与清晰标签)
+/// Bruno 风格请求项列表行 (带清晰高亮选框、指示条与悬浮反馈)
 struct RequestRowView: View {
     let request: RequestModel
     let isSelected: Bool
@@ -534,47 +596,65 @@ struct RequestRowView: View {
     let onDuplicate: () -> Void
     let onDelete: () -> Void
 
+    @State private var isHovered: Bool = false
+
     var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 6) {
-                // Method 徽标胶囊 (类似 Bruno 的 GET/POST 彩色标识)
-                Text(request.callType.shortTag)
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundColor(callTypeColor)
-                    .frame(width: 22, height: 16)
-                    .background(callTypeColor.opacity(0.12))
-                    .cornerRadius(3)
+        HStack(spacing: 6) {
+            // Method 徽标胶囊 (类似 Bruno 的 GET/POST 彩色标识)
+            Text(request.callType.shortTag)
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(callTypeColor)
+                .frame(width: 22, height: 16)
+                .background(callTypeColor.opacity(isSelected ? 0.22 : 0.12))
+                .cornerRadius(3)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 4) {
-                        Text(request.name)
-                            .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                            .lineLimit(1)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(request.name)
+                        .font(.system(size: 12, weight: isSelected ? .bold : .regular))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
 
-                        if isDirty {
-                            Circle()
-                                .fill(Color.orange)
-                                .frame(width: 5, height: 5)
-                                .help("有未保存的修改 (⌘S 保存)")
-                        }
-                    }
-
-                    if !request.methodName.isEmpty {
-                        Text(request.methodName)
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+                    if isDirty {
+                        Circle()
+                            .fill(Color.orange)
+                            .frame(width: 5, height: 5)
+                            .help("有未保存的修改 (⌘S 保存)")
                     }
                 }
 
-                Spacer()
+                if !request.methodName.isEmpty {
+                    Text(request.methodName)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(isSelected ? .accentColor.opacity(0.9) : .secondary)
+                        .lineLimit(1)
+                }
             }
-            .padding(.vertical, 4)
-            .padding(.horizontal, 6)
-            .background(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
-            .cornerRadius(6)
+
+            Spacer()
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? Color.accentColor.opacity(0.20) : (isHovered ? Color.gray.opacity(0.12) : Color.clear))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isSelected ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1)
+        )
+        .overlay(alignment: .leading) {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.accentColor)
+                    .frame(width: 3, height: 16)
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+        .onTapGesture {
+            onSelect()
+        }
         .contextMenu {
             Button("复制此请求 (Duplicate)", action: onDuplicate)
             Divider()

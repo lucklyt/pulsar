@@ -259,6 +259,15 @@ public struct RequestEditorView: View {
                         .stroke(Color.gray.opacity(0.2), lineWidth: 1)
                 )
 
+            // 载荷编辑框输入 {{ 时的快速补全胶囊栏
+            if let payloadVarTrigger = detectOpenVariableTrigger(in: request.payload) {
+                VariableSuggestionBarView(
+                    query: payloadVarTrigger.query,
+                    text: $request.payload,
+                    appState: appState
+                )
+            }
+
             // 变量解析诊断提示 (若存在未解析的引用变量)
             let unresolvedVars = EnvironmentEngine.shared.findUnresolvedVariables(
                 in: request.payload,
@@ -735,9 +744,12 @@ public struct RequestEditorView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Bearer Token (支持引用环境凭据 {{jwt_token}}):")
                         .font(.system(size: 11, weight: .medium))
-                    TextField("ey...", text: $request.auth.bearerToken)
-                        .font(.system(size: 12, design: .monospaced))
-                        .textFieldStyle(.roundedBorder)
+                    VariableAutocompleteTextField("ey... 或 {{token}}", text: $request.auth.bearerToken, appState: appState, font: .system(size: 12, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(5)
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.gray.opacity(0.2), lineWidth: 1))
                 }
             case .apiKey:
                 VStack(alignment: .leading, spacing: 8) {
@@ -748,21 +760,32 @@ public struct RequestEditorView: View {
 
                     Text("API Key 值 (支持 {{secret_key}}):")
                         .font(.system(size: 11, weight: .medium))
-                    TextField("输入 Key", text: $request.auth.apiKeyValue)
-                        .font(.system(size: 12, design: .monospaced))
-                        .textFieldStyle(.roundedBorder)
+                    VariableAutocompleteTextField("输入 Key 或 {{secret}}", text: $request.auth.apiKeyValue, appState: appState, font: .system(size: 12, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(5)
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.gray.opacity(0.2), lineWidth: 1))
                 }
             case .basic:
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Username:")
                         .font(.system(size: 11, weight: .medium))
-                    TextField("用户名", text: $request.auth.username)
-                        .textFieldStyle(.roundedBorder)
+                    VariableAutocompleteTextField("用户名", text: $request.auth.username, appState: appState)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(5)
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.gray.opacity(0.2), lineWidth: 1))
 
                     Text("Password:")
                         .font(.system(size: 11, weight: .medium))
-                    SecureField("密码", text: $request.auth.password)
-                        .textFieldStyle(.roundedBorder)
+                    VariableAutocompleteTextField("密码", text: $request.auth.password, appState: appState)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(5)
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.gray.opacity(0.2), lineWidth: 1))
                 }
             }
 

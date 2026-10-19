@@ -121,6 +121,8 @@ public struct CodeSnippetView: View {
         let finalPayload: String
         let finalHeaders: [MetadataHeader]
         let finalAuth: AuthConfig
+        let finalTLS: TLSConfig
+        var finalReq = effReq
 
         if resolveVariables {
             finalAddress = EnvironmentEngine.shared.resolve(
@@ -153,22 +155,52 @@ public struct CodeSnippetView: View {
                 environment: appState.activeEnvironment,
                 globalVariables: appState.workspace.globalVariables
             )
+            authCopy.username = EnvironmentEngine.shared.resolve(
+                template: authCopy.username,
+                environment: appState.activeEnvironment,
+                globalVariables: appState.workspace.globalVariables
+            )
+            authCopy.password = EnvironmentEngine.shared.resolve(
+                template: authCopy.password,
+                environment: appState.activeEnvironment,
+                globalVariables: appState.workspace.globalVariables
+            )
             finalAuth = authCopy
+
+            var tlsCopy = effConfig.effectiveSecurity
+            tlsCopy.serverNameOverride = EnvironmentEngine.shared.resolve(
+                template: tlsCopy.serverNameOverride,
+                environment: appState.activeEnvironment,
+                globalVariables: appState.workspace.globalVariables
+            )
+            finalTLS = tlsCopy
+
+            finalReq.serviceName = EnvironmentEngine.shared.resolve(
+                template: effReq.serviceName,
+                environment: appState.activeEnvironment,
+                globalVariables: appState.workspace.globalVariables
+            )
+            finalReq.methodName = EnvironmentEngine.shared.resolve(
+                template: effReq.methodName,
+                environment: appState.activeEnvironment,
+                globalVariables: appState.workspace.globalVariables
+            )
         } else {
             finalAddress = effReq.address
             finalPayload = effReq.payload
             finalHeaders = effReq.metadata
             finalAuth = effConfig.effectiveAuth
+            finalTLS = effConfig.effectiveSecurity
         }
 
         return CodeSnippetEngine.shared.generateSnippet(
             language: selectedLanguage,
-            request: effReq,
+            request: finalReq,
             effectiveAddress: finalAddress,
             effectivePayload: finalPayload,
             effectiveHeaders: finalHeaders,
             effectiveAuth: finalAuth,
-            effectiveTLS: effConfig.effectiveSecurity
+            effectiveTLS: finalTLS
         )
     }
 
