@@ -72,7 +72,11 @@ cat <<EOF > "$CONTENTS_DIR/Info.plist"
 </plist>
 EOF
 
-echo "==> Successfully packaged ${APP_NAME}.app at: $APP_BUNDLE"
+echo "==> Code signing ${APP_NAME}.app (Ad-Hoc with deep resource sealing)..."
+codesign --force --deep --sign - "$APP_BUNDLE"
+codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+
+echo "==> Successfully packaged and signed ${APP_NAME}.app at: $APP_BUNDLE"
 
 if [ "$1" = "--dmg" ] || [ "$1" = "--package" ] || [ -n "$PACKAGE" ]; then
     echo "==> Packaging DMG and ZIP installers..."
