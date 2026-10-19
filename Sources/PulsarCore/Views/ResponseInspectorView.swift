@@ -13,44 +13,113 @@ public struct ResponseInspectorView: View {
 
     enum ResponseTab: String, CaseIterable, Identifiable {
         case body = "响应体"
-        case assertions = "断言测试"
-        case diff = "快照对比"
         case headers = "响应头"
         case timeline = "时间线"
+        case assertions = "断言测试"
+        case diff = "快照对比"
         case stats = "统计指标"
         case grpcurl = "CLI 导出"
 
         var id: String { rawValue }
     }
 
+    private let primaryTabs: [ResponseTab] = [.body, .headers, .timeline]
+    private let secondaryTabs: [ResponseTab] = [.assertions, .diff, .stats, .grpcurl]
+
+    private var visibleTabs: [ResponseTab] {
+        if primaryTabs.contains(selectedTab) {
+            return primaryTabs
+        } else {
+            return primaryTabs + [selectedTab]
+        }
+    }
+
+    private func tabBadge(_ tab: ResponseTab) -> String? {
+        switch tab {
+        case .body:
+            return nil
+        case .headers:
+            let totalHeaders = (response?.initialMetadata.count ?? 0) + (response?.trailingMetadata.count ?? 0)
+            return totalHeaders > 0 ? "\(totalHeaders)" : nil
+        case .timeline:
+            let allEvents = (response?.streamEvents ?? []) + streamEvents
+            if !allEvents.isEmpty || currentRequest?.callType != .unary {
+                return "\(allEvents.count)"
+            }
+            return nil
+        case .assertions:
+            if let resp = response, !resp.assertionResults.isEmpty {
+                let passed = resp.assertionResults.filter { $0.passed }.count
+                return "\(passed)/\(resp.assertionResults.count)"
+            } else if let req = currentRequest, !req.assertions.isEmpty {
+                return "\(req.assertions.filter { $0.isEnabled }.count)"
+            }
+            return nil
+        case .diff:
+            let hasSnapshot = (currentRequest != nil && appState.responseSnapshots[currentRequest!.id] != nil)
+            return hasSnapshot ? "快照" : nil
+        case .stats:
+            return nil
+        case .grpcurl:
+            return "cURL"
+        }
+    }
+
+    private var hasSecondaryActiveBadge: Bool {
+        secondaryTabs.contains { tabBadge($0) != nil }
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
-            // MARK: - 整合一体化响应菜单栏 (左侧 Bruno 紧凑选项卡 + 右侧状态与时延)
+            // MARK: - 整合一体化响应菜单栏 (左侧 Bruno 风格折叠选项卡 + 右侧状态与时延)
             HStack(spacing: 0) {
-                // 左侧 Bruno 风格紧凑选项卡 (自适应内容宽度，零多余空白)
+                // 左侧 Bruno 风格折叠选项卡 (常驻 Response, Headers, Timeline + 更多选单)
                 HStack(spacing: 0) {
-                    tabButton(.body, badge: nil)
-
-                    if let resp = response, !resp.assertionResults.isEmpty {
-                        let passed = resp.assertionResults.filter { $0.passed }.count
-                        tabButton(.assertions, badge: "\(passed)/\(resp.assertionResults.count)")
-                    } else if let req = currentRequest, !req.assertions.isEmpty {
-                        tabButton(.assertions, badge: "\(req.assertions.filter { $0.isEnabled }.count)")
+                    ForEach(visibleTabs) { tab in
+                        tabButton(tab, badge: tabBadge(tab))
                     }
 
-                    let hasSnapshot = (currentRequest != nil && appState.responseSnapshots[currentRequest!.id] != nil)
-                    tabButton(.diff, badge: hasSnapshot ? "快照" : nil)
+                    // Bruno 风格折叠“更多”菜单
+                    Menu {
+                        ForEach(secondaryTabs) { tab in
+                            Button {
+                                selectedTab = tab
+                            } label: {
+                                HStack {
+                                    if selectedTab == tab {
+                                        Text("✓ " + tab.rawValue)
+                                    } else {
+                                        Text(tab.rawValue)
+                                    }
+                                    if let b = tabBadge(tab) {
+                                        Text(" (\(b))")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text("更多")
+                                .font(.system(size: 11, weight: secondaryTabs.contains(selectedTab) ? .semibold : .regular))
+                                .foregroundColor(secondaryTabs.contains(selectedTab) ? .primary : .secondary)
 
-                    let totalHeaders = (response?.initialMetadata.count ?? 0) + (response?.trailingMetadata.count ?? 0)
-                    tabButton(.headers, badge: totalHeaders > 0 ? "\(totalHeaders)" : nil)
+                            if hasSecondaryActiveBadge && !secondaryTabs.contains(selectedTab) {
+                                Circle()
+                                    .fill(Color.accentColor)
+                                    .frame(width: 5, height: 5)
+                            }
 
-                    let allEvents = (response?.streamEvents ?? []) + streamEvents
-                    if !allEvents.isEmpty || currentRequest?.callType != .unary {
-                        tabButton(.timeline, badge: "\(allEvents.count)")
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 7, weight: .bold))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 7)
+                        .contentShape(Rectangle())
                     }
-
-                    tabButton(.stats, badge: nil)
-                    tabButton(.grpcurl, badge: "cURL")
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("更多响应观测 (断言结果、快照对比、统计指标、CLI 导出)")
                 }
 
                 Spacer(minLength: 8)
@@ -232,6 +301,18 @@ public struct ResponseInspectorView: View {
                 }
                 .buttonStyle(.plain)
                 .help("清空当前响应内容")
+
+                // Bruno 风格分栏方向快速切换 (左右并排 ⇄ 上下并排)
+                Button(action: {
+                    appState.layoutMode = (appState.layoutMode == .horizontal ? .vertical : .horizontal)
+                }) {
+                    Image(systemName: appState.layoutMode == .horizontal ? "rectangle.split.2x1" : "rectangle.split.1x2")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .padding(3)
+                }
+                .buttonStyle(.plain)
+                .help("切换分栏方向: 当前为\(appState.layoutMode.rawValue)，点击切换为\(appState.layoutMode == .horizontal ? "上下并排" : "左右并排")")
 
             } else if isExecuting {
                 HStack(spacing: 4) {

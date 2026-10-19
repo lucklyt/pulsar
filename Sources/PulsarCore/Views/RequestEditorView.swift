@@ -24,38 +24,102 @@ public struct RequestEditorView: View {
         var id: String { rawValue }
     }
 
+    private let primaryTabs: [EditorTab] = [.body, .headers, .auth]
+    private let secondaryTabs: [EditorTab] = [.assertions, .vars, .docs, .settings, .schema]
+
+    private var visibleTabs: [EditorTab] {
+        if primaryTabs.contains(selectedTab) {
+            return primaryTabs
+        } else {
+            return primaryTabs + [selectedTab]
+        }
+    }
+
+    private func tabBadge(_ tab: EditorTab) -> String? {
+        switch tab {
+        case .body:
+            return nil
+        case .headers:
+            let headerCount = request.metadata.filter { $0.isEnabled && !$0.key.isEmpty }.count
+            return headerCount > 0 ? "\(headerCount)" : nil
+        case .auth:
+            if request.auth.type == .inherit {
+                let eff = appState.resolveEffectiveConfig(for: request)
+                return eff.effectiveAuth.type == .none ? "继承:无" : "继承"
+            } else if request.auth.type == .none {
+                return nil
+            } else {
+                return request.auth.type.rawValue
+            }
+        case .assertions:
+            let assertCount = request.assertions.filter { $0.isEnabled }.count
+            return assertCount > 0 ? "\(assertCount)" : nil
+        case .vars:
+            let varsCount = request.responseVars.filter { $0.isEnabled }.count
+            return varsCount > 0 ? "\(varsCount)" : nil
+        case .docs:
+            let docLength = request.docs.trimmingCharacters(in: .whitespacesAndNewlines).count
+            return docLength > 0 ? "Doc" : nil
+        case .settings:
+            return nil
+        case .schema:
+            return request.serviceName.isEmpty ? nil : "Proto"
+        }
+    }
+
+    private var hasSecondaryActiveBadge: Bool {
+        secondaryTabs.contains { tabBadge($0) != nil }
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
-            // Bruno 风格紧凑选项卡栏：左对齐自适应紧凑宽度，零多余空白
+            // Bruno 风格折叠选项卡栏：常驻核心标签 (Body, Headers, Auth) + 活跃选中项 + 更多下拉选单
             HStack(spacing: 0) {
-                tabButton(.body, badge: nil)
+                ForEach(visibleTabs) { tab in
+                    tabButton(tab, badge: tabBadge(tab))
+                }
 
-                let headerCount = request.metadata.filter { $0.isEnabled && !$0.key.isEmpty }.count
-                tabButton(.headers, badge: headerCount > 0 ? "\(headerCount)" : nil)
-
-                let authBadge: String? = {
-                    if request.auth.type == .inherit {
-                        let eff = appState.resolveEffectiveConfig(for: request)
-                        return eff.effectiveAuth.type == .none ? "继承:无" : "继承"
-                    } else if request.auth.type == .none {
-                        return nil
-                    } else {
-                        return request.auth.type.rawValue
+                // Bruno 风格折叠“更多”菜单
+                Menu {
+                    ForEach(secondaryTabs) { tab in
+                        Button {
+                            selectedTab = tab
+                        } label: {
+                            HStack {
+                                if selectedTab == tab {
+                                    Text("✓ " + tab.rawValue)
+                                } else {
+                                    Text(tab.rawValue)
+                                }
+                                if let b = tabBadge(tab) {
+                                    Text(" (\(b))")
+                                }
+                            }
+                        }
                     }
-                }()
-                tabButton(.auth, badge: authBadge)
+                } label: {
+                    HStack(spacing: 3) {
+                        Text("更多")
+                            .font(.system(size: 12, weight: secondaryTabs.contains(selectedTab) ? .semibold : .regular))
+                            .foregroundColor(secondaryTabs.contains(selectedTab) ? .primary : .secondary)
 
-                let assertCount = request.assertions.filter { $0.isEnabled }.count
-                tabButton(.assertions, badge: assertCount > 0 ? "\(assertCount)" : nil)
+                        if hasSecondaryActiveBadge && !secondaryTabs.contains(selectedTab) {
+                            Circle()
+                                .fill(Color.accentColor)
+                                .frame(width: 5, height: 5)
+                        }
 
-                let varsCount = request.responseVars.filter { $0.isEnabled }.count
-                tabButton(.vars, badge: varsCount > 0 ? "\(varsCount)" : nil)
-
-                let docLength = request.docs.trimmingCharacters(in: .whitespacesAndNewlines).count
-                tabButton(.docs, badge: docLength > 0 ? "Doc" : nil)
-
-                tabButton(.settings, badge: nil)
-                tabButton(.schema, badge: request.serviceName.isEmpty ? nil : "Proto")
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("更多请求配置 (断言测试、响应变量、文档、连接配置、Proto 文档)")
 
                 Spacer()
             }

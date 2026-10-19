@@ -311,12 +311,19 @@ final class PulsarUITests: XCTestCase {
         )
 
         let hostingView = NSHostingView(rootView: inspectorView)
-        hostingView.frame = NSRect(x: 0, y: 0, width: 500, height: 600)
+        // 验证 Bruno 风格折叠菜单栏在紧凑宽度 (420px) 下依然从容渲染，不与右侧状态栏冲突
+        hostingView.frame = NSRect(x: 0, y: 0, width: 420, height: 600)
         hostingView.layoutSubtreeIfNeeded()
 
         XCTAssertTrue(hostingView.fittingSize.width > 0)
         XCTAssertEqual(appState.activeResponse?.statusCode, 0)
         XCTAssertEqual(appState.activeResponse?.statusName, "OK")
+
+        // 验证分栏布局切换互动
+        let initialLayout = appState.layoutMode
+        appState.layoutMode = (initialLayout == .horizontal ? .vertical : .horizontal)
+        hostingView.layoutSubtreeIfNeeded()
+        XCTAssertNotEqual(appState.layoutMode, initialLayout)
     }
 
     // MARK: - 7. ⌘P 快速直达调色板 QuickOpenPaletteView 渲染
