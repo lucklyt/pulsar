@@ -11,10 +11,10 @@ public enum GRPCCallType: String, Codable, CaseIterable, Identifiable {
 
     public var displayName: String {
         switch self {
-        case .unary: return "Unary (一问一答)"
-        case .serverStreaming: return "Server Stream (服务端流)"
-        case .clientStreaming: return "Client Stream (客户端流)"
-        case .bidiStreaming: return "Bidirectional (双向流)"
+        case .unary: return "Unary"
+        case .serverStreaming: return "Server Streaming"
+        case .clientStreaming: return "Client Streaming"
+        case .bidiStreaming: return "Bidirectional Streaming"
         }
     }
 
@@ -24,6 +24,21 @@ public enum GRPCCallType: String, Codable, CaseIterable, Identifiable {
         case .serverStreaming: return "SS"
         case .clientStreaming: return "CS"
         case .bidiStreaming: return "BD"
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = (try? container.decode(String.self)) ?? "UNARY"
+        let upper = raw.uppercased()
+        if upper.contains("SERVER") || upper == "SS" {
+            self = .serverStreaming
+        } else if upper.contains("CLIENT") || upper == "CS" {
+            self = .clientStreaming
+        } else if upper.contains("BIDI") || upper.contains("BIDIRECTIONAL") || upper == "BD" {
+            self = .bidiStreaming
+        } else {
+            self = .unary
         }
     }
 }
@@ -82,12 +97,29 @@ public struct AuthConfig: Codable, Equatable, Hashable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.type = try container.decodeIfPresent(AuthType.self, forKey: .type) ?? .inherit
-        self.bearerToken = try container.decodeIfPresent(String.self, forKey: .bearerToken) ?? ""
-        self.apiKeyName = try container.decodeIfPresent(String.self, forKey: .apiKeyName) ?? "x-api-key"
-        self.apiKeyValue = try container.decodeIfPresent(String.self, forKey: .apiKeyValue) ?? ""
-        self.username = try container.decodeIfPresent(String.self, forKey: .username) ?? ""
-        self.password = try container.decodeIfPresent(String.self, forKey: .password) ?? ""
+        if let rawType = try? container.decodeIfPresent(String.self, forKey: .type) {
+            let lower = rawType.lowercased()
+            if lower.contains("none") || lower.contains("无") {
+                self.type = .none
+            } else if lower.contains("bearer") {
+                self.type = .bearer
+            } else if lower.contains("api") {
+                self.type = .apiKey
+            } else if lower.contains("basic") {
+                self.type = .basic
+            } else if lower.contains("inherit") || lower.contains("继承") {
+                self.type = .inherit
+            } else {
+                self.type = AuthType(rawValue: rawType) ?? .inherit
+            }
+        } else {
+            self.type = .inherit
+        }
+        self.bearerToken = (try? container.decodeIfPresent(String.self, forKey: .bearerToken)) ?? ""
+        self.apiKeyName = (try? container.decodeIfPresent(String.self, forKey: .apiKeyName)) ?? "x-api-key"
+        self.apiKeyValue = (try? container.decodeIfPresent(String.self, forKey: .apiKeyValue)) ?? ""
+        self.username = (try? container.decodeIfPresent(String.self, forKey: .username)) ?? ""
+        self.password = (try? container.decodeIfPresent(String.self, forKey: .password)) ?? ""
     }
 }
 
@@ -130,12 +162,29 @@ public struct TLSConfig: Codable, Equatable, Hashable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.mode = try container.decodeIfPresent(Mode.self, forKey: .mode) ?? .inherit
-        self.rootCAPath = try container.decodeIfPresent(String.self, forKey: .rootCAPath) ?? ""
-        self.clientCertPath = try container.decodeIfPresent(String.self, forKey: .clientCertPath) ?? ""
-        self.clientKeyPath = try container.decodeIfPresent(String.self, forKey: .clientKeyPath) ?? ""
-        self.serverNameOverride = try container.decodeIfPresent(String.self, forKey: .serverNameOverride) ?? ""
-        self.insecureSkipVerify = try container.decodeIfPresent(Bool.self, forKey: .insecureSkipVerify) ?? false
+        if let rawMode = try? container.decodeIfPresent(String.self, forKey: .mode) {
+            let lower = rawMode.lowercased()
+            if lower.contains("plaintext") || lower.contains("明文") || lower.contains("insecure") {
+                self.mode = .plaintext
+            } else if lower.contains("custom") || lower.contains("自定义") {
+                self.mode = .tlsCustomCA
+            } else if lower.contains("mtls") || lower.contains("双向") || lower.contains("client") {
+                self.mode = .mtls
+            } else if lower.contains("tls") {
+                self.mode = .tlsSystem
+            } else if lower.contains("inherit") || lower.contains("继承") {
+                self.mode = .inherit
+            } else {
+                self.mode = Mode(rawValue: rawMode) ?? .inherit
+            }
+        } else {
+            self.mode = .inherit
+        }
+        self.rootCAPath = (try? container.decodeIfPresent(String.self, forKey: .rootCAPath)) ?? ""
+        self.clientCertPath = (try? container.decodeIfPresent(String.self, forKey: .clientCertPath)) ?? ""
+        self.clientKeyPath = (try? container.decodeIfPresent(String.self, forKey: .clientKeyPath)) ?? ""
+        self.serverNameOverride = (try? container.decodeIfPresent(String.self, forKey: .serverNameOverride)) ?? ""
+        self.insecureSkipVerify = (try? container.decodeIfPresent(Bool.self, forKey: .insecureSkipVerify)) ?? false
     }
 }
 

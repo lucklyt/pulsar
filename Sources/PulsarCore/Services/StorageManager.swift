@@ -5,64 +5,113 @@ public final class StorageManager {
     public static let shared = StorageManager()
 
     private let fileManager = FileManager.default
-    private let appSupportDir: URL
+    public let appSupportDir: URL
+    public let userHomeDir: URL
 
     public init(appSupportDir: URL? = nil) {
+        let home = fileManager.homeDirectoryForCurrentUser
+        self.userHomeDir = home.appendingPathComponent(".pulsar", isDirectory: true)
+
         if let dir = appSupportDir {
             self.appSupportDir = dir
         } else {
             let baseDir = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             self.appSupportDir = baseDir.appendingPathComponent("Pulsar", isDirectory: true)
         }
+
         try? fileManager.createDirectory(at: self.appSupportDir, withIntermediateDirectories: true)
+        try? fileManager.createDirectory(at: self.userHomeDir, withIntermediateDirectories: true)
     }
 
-    private var workspaceFile: URL {
+    public var workspaceFile: URL {
         appSupportDir.appendingPathComponent("workspace.json")
     }
 
-    private var historyFile: URL {
+    public var backupWorkspaceFile: URL {
+        appSupportDir.appendingPathComponent("workspace.backup.json")
+    }
+
+    public var userHomeWorkspaceFile: URL {
+        userHomeDir.appendingPathComponent("workspace.json")
+    }
+
+    public var historyFile: URL {
         appSupportDir.appendingPathComponent("history.json")
     }
 
-    // MARK: - Workspace 保存与加载
+    public var userHomeHistoryFile: URL {
+        userHomeDir.appendingPathComponent("history.json")
+    }
+
+    public var protoConfigFile: URL {
+        appSupportDir.appendingPathComponent("proto_imports.json")
+    }
+
+    public var userHomeProtoConfigFile: URL {
+        userHomeDir.appendingPathComponent("proto_imports.json")
+    }
+
+    // MARK: - Workspace 保存与加载 (三级防丢持久化保护体系)
 
     public func saveWorkspace(_ workspace: WorkspaceModel) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(workspace)
+
+        // 1. 写入主要应用支持目录 (~/Library/Application Support/Pulsar/workspace.json)
         try data.write(to: workspaceFile, options: .atomic)
+
+        // 2. 自动保存本地备份文件 (workspace.backup.json)
+        try? data.write(to: backupWorkspaceFile, options: .atomic)
+
+        // 3. 自动同步镜像到用户主目录 ~/.pulsar/workspace.json (双重保障，重新安装/清理缓存防丢失)
+        try? fileManager.createDirectory(at: userHomeDir, withIntermediateDirectories: true)
+        try? data.write(to: userHomeWorkspaceFile, options: .atomic)
     }
 
     public func loadWorkspace() -> WorkspaceModel {
-        guard fileManager.fileExists(atPath: workspaceFile.path),
-              let data = try? Data(contentsOf: workspaceFile),
-              var model = try? JSONDecoder().decode(WorkspaceModel.self, from: data) else {
-            // 首次启动，生成具有丰富演示用例与环境配置的初始工作空间
-            let initial = createDefaultWorkspace()
-            try? saveWorkspace(initial)
-            return initial
-        }
+        let decoder = JSONDecoder()
 
-        // 如果现有工作空间尚未包含任何文件夹，自动提供一个流式接口示例文件夹以供体验折叠
-        if let firstColIndex = model.collections.firstIndex(where: { $0.folders.isEmpty && $0.requests.count >= 2 }) {
-            let colId = model.collections[firstColIndex].id
-            let folderId = UUID()
-            var folder = FolderModel(id: folderId, name: "Streaming APIs (流式接口)", collectionId: colId)
-
-            for i in 0..<model.collections[firstColIndex].requests.count {
-                if model.collections[firstColIndex].requests[i].callType != .unary {
-                    model.collections[firstColIndex].requests[i].folderId = folderId
-                    folder.requestIds.append(model.collections[firstColIndex].requests[i].id)
-                }
-            }
-            if !folder.requestIds.isEmpty {
-                model.collections[firstColIndex].folders.append(folder)
-                try? saveWorkspace(model)
+        // 1. 优先尝试从主工作区文件加载
+        if fileManager.fileExists(atPath: workspaceFile.path),
+           let data = try? Data(contentsOf: workspaceFile) {
+            do {
+                let model = try decoder.decode(WorkspaceModel.self, from: data)
+                // 成功解析后同步到备份和用户主目录
+                try? data.write(to: backupWorkspaceFile, options: .atomic)
+                try? data.write(to: userHomeWorkspaceFile, options: .atomic)
+                return model
+            } catch {
+                print("⚠️ [Pulsar Storage] workspace.json 解析警告: \(error)")
+                // 安全备份损坏文件，绝不直接覆盖丢弃
+                let timestamp = Int(Date().timeIntervalSince1970)
+                let corruptedUrl = appSupportDir.appendingPathComponent("workspace.corrupted-\(timestamp).json")
+                try? fileManager.copyItem(at: workspaceFile, to: corruptedUrl)
             }
         }
 
-        return model
+        // 2. 主文件如果解析异常或不存在，尝试从本地备份 (workspace.backup.json) 恢复
+        if fileManager.fileExists(atPath: backupWorkspaceFile.path),
+           let data = try? Data(contentsOf: backupWorkspaceFile),
+           let backupModel = try? decoder.decode(WorkspaceModel.self, from: data) {
+            print("✅ [Pulsar Storage] 已自动从本地备份 workspace.backup.json 恢复工作区配置！")
+            try? saveWorkspace(backupModel)
+            return backupModel
+        }
+
+        // 3. 尝试从用户主目录 ~/.pulsar/workspace.json 镜像恢复 (针对删除应用/重新安装场景)
+        if fileManager.fileExists(atPath: userHomeWorkspaceFile.path),
+           let data = try? Data(contentsOf: userHomeWorkspaceFile),
+           let homeModel = try? decoder.decode(WorkspaceModel.self, from: data) {
+            print("✅ [Pulsar Storage] 已自动从 ~/.pulsar/workspace.json 恢复原有配置！")
+            try? saveWorkspace(homeModel)
+            return homeModel
+        }
+
+        // 4. 仅在确实没有任何旧配置的全新安装时，才生成预置演示数据
+        let initial = createDefaultWorkspace()
+        try? saveWorkspace(initial)
+        return initial
     }
 
     // MARK: - History 保存与加载
@@ -72,16 +121,55 @@ public final class StorageManager {
         encoder.outputFormatting = [.prettyPrinted]
         if let data = try? encoder.encode(responses) {
             try? data.write(to: historyFile, options: .atomic)
+            try? data.write(to: userHomeHistoryFile, options: .atomic)
         }
     }
 
     public func loadHistory() -> [RPCResponse] {
-        guard fileManager.fileExists(atPath: historyFile.path),
-              let data = try? Data(contentsOf: historyFile),
-              let list = try? JSONDecoder().decode([RPCResponse].self, from: data) else {
-            return []
+        let decoder = JSONDecoder()
+        if fileManager.fileExists(atPath: historyFile.path),
+           let data = try? Data(contentsOf: historyFile),
+           let list = try? decoder.decode([RPCResponse].self, from: data) {
+            return list
         }
-        return list
+        if fileManager.fileExists(atPath: userHomeHistoryFile.path),
+           let data = try? Data(contentsOf: userHomeHistoryFile),
+           let list = try? decoder.decode([RPCResponse].self, from: data) {
+            return list
+        }
+        return []
+    }
+
+    // MARK: - Proto 仓库配置保存与加载 (支持目录与独立文件跨安装持久化)
+
+    public func saveProtoConfig(_ config: ProtoRepositoryConfig) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted]
+        if let data = try? encoder.encode(config) {
+            try? data.write(to: protoConfigFile, options: .atomic)
+            try? data.write(to: userHomeProtoConfigFile, options: .atomic)
+        }
+    }
+
+    public func loadProtoConfig() -> ProtoRepositoryConfig {
+        let decoder = JSONDecoder()
+        if fileManager.fileExists(atPath: protoConfigFile.path),
+           let data = try? Data(contentsOf: protoConfigFile),
+           let config = try? decoder.decode(ProtoRepositoryConfig.self, from: data) {
+            return config
+        }
+        if fileManager.fileExists(atPath: userHomeProtoConfigFile.path),
+           let data = try? Data(contentsOf: userHomeProtoConfigFile),
+           let config = try? decoder.decode(ProtoRepositoryConfig.self, from: data) {
+            return config
+        }
+        // 向后兼容旧格式 [ProtoImportPath]
+        if fileManager.fileExists(atPath: protoConfigFile.path),
+           let data = try? Data(contentsOf: protoConfigFile),
+           let paths = try? decoder.decode([ProtoImportPath].self, from: data) {
+            return ProtoRepositoryConfig(importPaths: paths)
+        }
+        return ProtoRepositoryConfig()
     }
 
     // MARK: - 预置默认演示数据
@@ -123,7 +211,7 @@ public final class StorageManager {
 
         // 2. 预置示例请求
         let reqUnary = RequestModel(
-            name: "SayHello (一问一答)",
+            name: "SayHello (Unary)",
             address: "{{grpc_host}}:{{grpc_port}}",
             serviceName: "helloworld.Greeter",
             methodName: "SayHello",
@@ -137,7 +225,7 @@ public final class StorageManager {
         )
 
         let reqServerStream = RequestModel(
-            name: "ListFeatures (服务端流)",
+            name: "ListFeatures (Server Streaming)",
             address: "{{grpc_host}}:{{grpc_port}}",
             serviceName: "routeguide.RouteGuide",
             methodName: "ListFeatures",
@@ -146,7 +234,7 @@ public final class StorageManager {
         )
 
         let reqBidiStream = RequestModel(
-            name: "RouteChat (全双工双向流)",
+            name: "RouteChat (Bidi Streaming)",
             address: "{{grpc_host}}:{{grpc_port}}",
             serviceName: "routeguide.RouteGuide",
             methodName: "RouteChat",

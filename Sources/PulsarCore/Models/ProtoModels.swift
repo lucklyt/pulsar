@@ -107,6 +107,18 @@ public struct ProtoImportPath: Identifiable, Codable, Equatable, Hashable {
     }
 }
 
+/// Proto 仓库持久化配置 (搜索目录与独立文件列表)
+public struct ProtoRepositoryConfig: Codable, Equatable {
+    public var importPaths: [ProtoImportPath]
+    public var standaloneFiles: [String]
+
+    public init(importPaths: [ProtoImportPath] = [], standaloneFiles: [String] = []) {
+        self.importPaths = importPaths
+        self.standaloneFiles = standaloneFiles
+    }
+}
+
+
 /// 解析后的 import 引用状态
 public struct ResolvedImport: Identifiable, Codable, Equatable, Hashable {
     public var id: String { rawImport }

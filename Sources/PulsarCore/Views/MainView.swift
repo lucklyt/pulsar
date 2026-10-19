@@ -220,7 +220,7 @@ public struct MainView: View {
             Text("欢迎使用 Pulsar")
                 .font(.system(size: 20, weight: .bold))
 
-            Text("macOS 原生高性能 gRPC / Protobuf 调试测试客户端")
+            Text("gRPC / Protobuf 调试测试客户端")
                 .font(.system(size: 13))
                 .foregroundColor(.secondary)
 

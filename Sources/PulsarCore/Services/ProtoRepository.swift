@@ -13,12 +13,50 @@ public final class ProtoRepository: ObservableObject {
     /// 扩展插件钩子规则
     @Published public var extensionPlugins: [ProtoExtensionPlugin] = []
 
+    /// 独立导入的文件绝对路径集合
+    @Published public var standaloneFiles: [String] = []
+
     private let parser = LocalProtoParser.shared
     private let fileManager = FileManager.default
 
     public init() {
         self.extensionPlugins = createDefaultExtensionPlugins()
         loadSampleProtoFiles()
+        loadPersistedConfig()
+    }
+
+    // MARK: - 持久化存储与恢复
+
+    public func saveConfig() {
+        let config = ProtoRepositoryConfig(importPaths: self.importPaths, standaloneFiles: self.standaloneFiles)
+        StorageManager.shared.saveProtoConfig(config)
+    }
+
+    public func loadPersistedConfig() {
+        let config = StorageManager.shared.loadProtoConfig()
+        var hasChanges = false
+        for item in config.importPaths {
+            if !importPaths.contains(where: { $0.path == item.path }) {
+                importPaths.append(item)
+                if item.isEnabled && fileManager.fileExists(atPath: item.path) {
+                    scanDirectory(item.path)
+                }
+                hasChanges = true
+            }
+        }
+        for file in config.standaloneFiles {
+            if !self.standaloneFiles.contains(file) {
+                self.standaloneFiles.append(file)
+                if fileManager.fileExists(atPath: file), let parsed = try? parser.parseFile(at: file) {
+                    loadedFiles.removeAll { $0.filePath == file }
+                    loadedFiles.append(parsed)
+                    hasChanges = true
+                }
+            }
+        }
+        if hasChanges {
+            resolveAllImports()
+        }
     }
 
     // MARK: - Import Paths (包含搜索路径管理 -I)
@@ -34,6 +72,7 @@ public final class ProtoRepository: ObservableObject {
         // 递归扫描并载入该 Import Path 下的所有 proto 文件
         scanDirectory(clean)
         resolveAllImports()
+        saveConfig()
     }
 
     /// 移除 Import Path
@@ -42,6 +81,7 @@ public final class ProtoRepository: ObservableObject {
             importPaths.removeAll { $0.id == id }
             loadedFiles.removeAll { $0.filePath.hasPrefix(item.path) }
             resolveAllImports()
+            saveConfig()
         }
     }
 
@@ -50,6 +90,7 @@ public final class ProtoRepository: ObservableObject {
         if let index = importPaths.firstIndex(where: { $0.id == id }) {
             importPaths[index].isEnabled.toggle()
             resolveAllImports()
+            saveConfig()
         }
     }
 
@@ -66,6 +107,7 @@ public final class ProtoRepository: ObservableObject {
         importPaths.removeAll { $0.path == clean }
         loadedFiles.removeAll { $0.filePath.hasPrefix(clean) }
         resolveAllImports()
+        saveConfig()
     }
 
     /// 添加单个 .proto 文件
@@ -79,14 +121,20 @@ public final class ProtoRepository: ObservableObject {
                 importPaths.append(ProtoImportPath(path: parentDir, isEnabled: true))
             }
 
+            if !standaloneFiles.contains(path) {
+                standaloneFiles.append(path)
+            }
+
             file.resolvedImports = resolveImports(for: file)
             loadedFiles.removeAll { $0.filePath == path }
             loadedFiles.append(file)
             resolveAllImports()
+            saveConfig()
         } catch {
             print("Failed to parse proto at \(path): \(error)")
         }
     }
+
 
     /// 重新扫描所有已配置的 Proto 根目录并重新解析全部 Import 引用
     public func reloadAll() {

@@ -7,7 +7,7 @@ public struct PulsarApp: App {
         WindowGroup {
             MainView()
                 .frame(minWidth: 1000, minHeight: 650)
-                .navigationTitle("Pulsar - 原生高性能 gRPC 客户端")
+                .navigationTitle("Pulsar")
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
@@ -19,7 +19,7 @@ public struct PulsarApp: App {
                     NSApplication.shared.orderFrontStandardAboutPanel(
                         options: [
                             NSApplication.AboutPanelOptionKey.applicationName: "Pulsar",
-                            NSApplication.AboutPanelOptionKey.version: "2.0.0 (Native)",
+                            NSApplication.AboutPanelOptionKey.version: "2.0.6",
                             NSApplication.AboutPanelOptionKey.credits: NSAttributedString(string: "Pulsar - The pulsing heart of native gRPC testing on macOS.\nDesigned for high-speed microservices & gRPC streaming.")
                         ]
                     )

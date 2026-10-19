@@ -1784,7 +1784,73 @@ final class PulsarTests: XCTestCase {
         XCTAssertEqual(binding.wrappedValue.serviceName, "helloworld.Greeter")
         XCTAssertEqual(binding.wrappedValue.methodName, "SayHello")
     }
+
+    func testGRPCCallTypeStandardNamingAndResilientDecoding() throws {
+        // 验证专业术语不再有蹩脚中文翻译
+        XCTAssertEqual(GRPCCallType.unary.displayName, "Unary")
+        XCTAssertEqual(GRPCCallType.serverStreaming.displayName, "Server Streaming")
+        XCTAssertEqual(GRPCCallType.clientStreaming.displayName, "Client Streaming")
+        XCTAssertEqual(GRPCCallType.bidiStreaming.displayName, "Bidirectional Streaming")
+
+        // 验证容错解码器正确支持各种格式
+        let jsonStr = """
+        [
+            "unary", "UNARY", "Unary", "un",
+            "serverStreaming", "SERVER_STREAMING", "ss",
+            "clientStreaming", "CLIENT_STREAMING", "cs",
+            "bidiStreaming", "BIDIRECTIONAL", "bidi", "bd",
+            "unknown_type"
+        ]
+        """
+        let data = jsonStr.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode([GRPCCallType].self, from: data)
+        XCTAssertEqual(decoded[0], .unary)
+        XCTAssertEqual(decoded[1], .unary)
+        XCTAssertEqual(decoded[4], .serverStreaming)
+        XCTAssertEqual(decoded[7], .clientStreaming)
+        XCTAssertEqual(decoded[10], .bidiStreaming)
+        XCTAssertEqual(decoded[13], .bidiStreaming)
+        XCTAssertEqual(decoded[14], .unary) // Fallback to unary
+    }
+
+    func testProtoRepositoryPersistence() {
+        let repo = ProtoRepository.shared
+        let testPath = "/tmp/pulsar_test_proto_dir_\(UUID().uuidString)"
+        repo.addImportPath(path: testPath)
+
+        let loadedConfig = StorageManager.shared.loadProtoConfig()
+        XCTAssertTrue(loadedConfig.importPaths.contains(where: { $0.path == testPath }))
+
+        // Clean up
+        if let id = repo.importPaths.first(where: { $0.path == testPath })?.id {
+            repo.removeImportPath(id: id)
+        }
+        let updatedConfig = StorageManager.shared.loadProtoConfig()
+        XCTAssertFalse(updatedConfig.importPaths.contains(where: { $0.path == testPath }))
+    }
+
+    func testStorageManagerMultiLayerPersistenceAndRecovery() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let sm = StorageManager(appSupportDir: tempDir)
+        let customWS = WorkspaceModel(name: "Test Triple Shield", collections: [], environments: [])
+        try sm.saveWorkspace(customWS)
+
+        // 验证主文件和备份文件均生成
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sm.workspaceFile.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sm.backupWorkspaceFile.path))
+
+        // 破坏主文件为非法 JSON
+        try "CORRUPTED_JSON_DATA".write(to: sm.workspaceFile, atomically: true, encoding: .utf8)
+
+        // 读取时应该自动从备份文件无缝恢复，绝不丢配置
+        let recovered = sm.loadWorkspace()
+        XCTAssertEqual(recovered.name, "Test Triple Shield")
+    }
 }
+
 
 // MARK: - Mock URLProtocol for Nacos HTTP 测试
 
