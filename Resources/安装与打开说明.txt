@@ -29,4 +29,11 @@
   在「应用程序」文件夹中，按住键盘上的「Control」键，
   用鼠标右键点击 Pulsar.app，在弹出菜单中选择「打开」，
   随后在确认框中再次点击「打开」。
+
+【方法 D：终端命令手动清除】
+  打开「终端」，执行以下任一命令（二选一即可）：
+  xattr -d com.apple.quarantine /Applications/Pulsar.app
+  或
+  xattr -c /Applications/Pulsar.app
+  （注：部分环境中的 xattr 不支持 -r 参数，直接执行上述命令即可，无需添加 -r）
 ============================================================

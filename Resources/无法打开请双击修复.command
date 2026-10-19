@@ -19,7 +19,9 @@ fi
 
 echo "🔍 找到 $TARGET，正在移除 Gatekeeper 下载隔离属性..."
 
-# 兼容各种版本的 xattr 命令格式 (不依赖 -r 选项)
+# 兼容各种版本的 xattr 命令格式 (优先使用系统原生 /usr/bin/xattr，不依赖 -r 选项)
+/usr/bin/xattr -d com.apple.quarantine "$TARGET" 2>/dev/null || true
+/usr/bin/xattr -c "$TARGET" 2>/dev/null || true
 xattr -d com.apple.quarantine "$TARGET" 2>/dev/null || true
 xattr -c "$TARGET" 2>/dev/null || true
 find "$TARGET" -exec xattr -c {} + 2>/dev/null || true

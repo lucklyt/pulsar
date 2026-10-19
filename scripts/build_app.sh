@@ -11,7 +11,7 @@ fi
 if [ -n "$GITHUB_REF_NAME" ]; then
     VERSION="${GITHUB_REF_NAME#v}"
 else
-    VERSION="${VERSION:-2.0.1}"
+    VERSION="${VERSION:-2.0.2}"
 fi
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 
@@ -76,8 +76,9 @@ cat <<EOF > "$CONTENTS_DIR/Info.plist"
 </plist>
 EOF
 
-# 清理可能存在的临时属性
-xattr -cr "$APP_BUNDLE" 2>/dev/null || true
+# 清理可能存在的临时属性与隔离标志
+xattr -cr "$APP_BUNDLE" 2>/dev/null || xattr -c "$APP_BUNDLE" 2>/dev/null || true
+find "$APP_BUNDLE" -exec xattr -c {} + 2>/dev/null || true
 
 echo "==> Code signing ${APP_NAME}.app (Ad-Hoc with deep resource sealing)..."
 codesign --force --deep --sign - "$APP_BUNDLE"
@@ -114,7 +115,8 @@ if [ "$1" = "--dmg" ] || [ "$1" = "--package" ] || [ -n "$PACKAGE" ]; then
     fi
 
     # 清除 staging 中可能的扩展属性
-    xattr -cr "$DMG_STAGING" 2>/dev/null || true
+    xattr -cr "$DMG_STAGING" 2>/dev/null || xattr -c "$DMG_STAGING" 2>/dev/null || true
+    find "$DMG_STAGING" -exec xattr -c {} + 2>/dev/null || true
 
     # 生成包含拖拽快捷方式的全新 DMG 镜像
     hdiutil create -volname "${APP_NAME}" -srcfolder "$DMG_STAGING" -ov -format UDZO "${APP_NAME}-macOS-arm64.dmg"
