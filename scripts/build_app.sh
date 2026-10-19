@@ -11,7 +11,7 @@ fi
 if [ -n "$GITHUB_REF_NAME" ]; then
     VERSION="${GITHUB_REF_NAME#v}"
 else
-    VERSION="${VERSION:-2.0.7}"
+    VERSION="${VERSION:-2.0.8}"
 fi
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 
@@ -39,6 +39,21 @@ if [ -f "$PROJECT_DIR/Resources/AppIcon_Pulsar.icns" ]; then
 elif [ -f "$PROJECT_DIR/Resources/AppIcon.icns" ]; then
     cp "$PROJECT_DIR/Resources/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 fi
+
+# 拷贝或下载嵌入式 grpcurl 执行引擎 (保障开箱即用真实网络调用能力)
+mkdir -p "$RESOURCES_DIR/bin"
+if [ -f "$PROJECT_DIR/Resources/bin/grpcurl" ]; then
+    cp "$PROJECT_DIR/Resources/bin/grpcurl" "$RESOURCES_DIR/bin/grpcurl"
+elif [ -f "/tmp/grpcurl" ]; then
+    cp "/tmp/grpcurl" "$RESOURCES_DIR/bin/grpcurl"
+elif command -v grpcurl >/dev/null 2>&1; then
+    cp "$(command -v grpcurl)" "$RESOURCES_DIR/bin/grpcurl"
+else
+    echo "==> Downloading grpcurl binary for embedding..."
+    curl -sL https://github.com/fullstorydev/grpcurl/releases/download/v1.9.2/grpcurl_1.9.2_osx_arm64.tar.gz | tar -xz -C "$RESOURCES_DIR/bin"
+fi
+chmod +x "$RESOURCES_DIR/bin/grpcurl"
+
 
 # 生成 Info.plist
 cat <<EOF > "$CONTENTS_DIR/Info.plist"

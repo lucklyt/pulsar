@@ -1849,7 +1849,35 @@ final class PulsarTests: XCTestCase {
         let recovered = sm.loadWorkspace()
         XCTAssertEqual(recovered.name, "Test Triple Shield")
     }
+
+    func testGRPCClientEngineRealNetworkExecutionAttempt() async {
+        let engine = GRPCClientEngine()
+        engine.mockModeForTesting = false // 开启真实网络调用引擎
+
+        let req = RequestModel(
+            name: "Real Network Call Attempt",
+            address: "127.0.0.1:54321", // 明确未开放服务的端口
+            serviceName: "test.RealService",
+            methodName: "RealMethod",
+            callType: .unary,
+            payload: "{\"test\": 123}",
+            timeoutSeconds: 2.0
+        )
+
+        let response = await engine.execute(
+            request: req,
+            activeEnvironment: nil,
+            globalVariables: []
+        )
+
+        // 验证真正通过网络层探测，绝不再返回虚假的硬编码模拟响应
+        XCTAssertFalse(response.responsePayload.contains("Unary response from test.RealService/RealMethod"))
+        // 验证返回真实的底层网络错误状态码 (14 UNAVAILABLE 或 4 DEADLINE_EXCEEDED)
+        XCTAssertNotEqual(response.statusCode, 0)
+        XCTAssertTrue(response.statusCode == 14 || response.statusCode == 4 || response.statusCode == 2)
+    }
 }
+
 
 
 // MARK: - Mock URLProtocol for Nacos HTTP 测试
